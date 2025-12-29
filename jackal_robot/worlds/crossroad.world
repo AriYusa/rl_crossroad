@@ -1,0 +1,344 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <world name="crossroad">
+    
+    <!-- GUI Camera Configuration -->
+    <gui>
+      <camera name="user_camera">
+        <pose>-2.0 -10.0 10.0 0 0.6 1.57</pose>
+      </camera>
+    </gui>
+
+    <!-- Physics Configuration -->
+    <physics name='default_physics' default='0' type='ode'>
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <!-- Scene Configuration -->
+    <scene>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.7 0.7 0.7 1</background>
+      <shadows>1</shadows>
+      <grid>false</grid>
+    </scene>
+
+    <!-- Sun Light -->
+    <light name='sun' type='directional'>
+      <cast_shadows>1</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- Ground Plane -->
+    <model name='ground_plane'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>100</mu>
+                <mu2>50</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <cast_shadows>0</cast_shadows>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grey</name>
+            </script>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Main Road (Horizontal) -->
+    <model name='road_horizontal'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.001 0 0 0</pose>
+        <collision name='collision'>
+          <geometry>
+            <box>
+              <size>20 7.0 0.01</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>20 7.0 0.01</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.3 0.3 0.3 1</ambient>
+            <diffuse>0.3 0.3 0.3 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Road Center Line (Yellow) -->
+    <model name='road_center_line'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.002 0 0 0</pose>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>20 0.1 0.01</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>1 1 0 1</ambient>
+            <diffuse>1 1 0 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Left Sidewalk -->
+    <model name='sidewalk_left'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 -4.5 0.01 0 0 0</pose>
+        <collision name='collision'>
+          <geometry>
+            <box>
+              <size>20 2.0 0.01</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>20 2.0 0.01</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Right Sidewalk -->
+    <model name='sidewalk_right'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 4.5 0.01 0 0 0</pose>
+        <collision name='collision'>
+          <geometry>
+            <box>
+              <size>20 2.0 0.01</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>20 2.0 0.01</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Pedestrian Crosswalk (Zebra Crossing) -->
+    <!-- Horizontal white stripes forming the zebra pattern -->
+    <model name='crosswalk_stripe_1'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 -2.5 0.003 0 0 0</pose>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>2.0 0.5 0.01</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>1 1 1 1</ambient>
+            <diffuse>1 1 1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name='crosswalk_stripe_2'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 -1.25 0.003 0 0 0</pose>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>2.0 0.5 0.01</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>1 1 1 1</ambient>
+            <diffuse>1 1 1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name='crosswalk_stripe_3'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.003 0 0 0</pose>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>2.0 0.5 0.01</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>1 1 1 1</ambient>
+            <diffuse>1 1 1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name='crosswalk_stripe_4'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 1.25 0.003 0 0 0</pose>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>2.0 0.5 0.01</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>1 1 1 1</ambient>
+            <diffuse>1 1 1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name='crosswalk_stripe_5'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 2.5 0.003 0 0 0</pose>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>2.0 0.5 0.01</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>1 1 1 1</ambient>
+            <diffuse>1 1 1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+
+    <!-- Goal Position Marker (Visual Guide) -->
+    <model name='goal_position'>
+      <static>1</static>
+      <link name='link'>
+        <pose>5.0 4.5 0.03 0 0 0</pose>
+        <visual name='visual'>
+          <geometry>
+            <cylinder>
+              <radius>0.3</radius>
+              <length>0.02</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0 0 1 1</ambient>
+            <diffuse>0 0 1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Boundary Walls Along Sidewalks -->
+    <!-- Left Wall (outer edge of left sidewalk) -->
+    <model name='wall_left'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 -5.5 0.15 0 0 0</pose>
+        <collision name='collision'>
+          <geometry>
+            <box>
+              <size>20 0.1 0.3</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>20 0.1 0.3</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.6 0.4 0.2 1</ambient>
+            <diffuse>0.6 0.4 0.2 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Right Wall (outer edge of right sidewalk) -->
+    <model name='wall_right'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 5.5 0.15 0 0 0</pose>
+        <collision name='collision'>
+          <geometry>
+            <box>
+              <size>20 0.1 0.3</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>20 0.1 0.3</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.6 0.4 0.2 1</ambient>
+            <diffuse>0.6 0.4 0.2 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

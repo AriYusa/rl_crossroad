@@ -1,0 +1,28 @@
+<launch>
+  <!-- Jackal Configuration -->
+  <arg name="x_pos" default="-5.0"/>
+  <arg name="y_pos" default="-4.5"/>
+  <arg name="z_pos" default="0.0"/>
+  <arg name="yaw" default="0.0"/>
+  <arg name="world_file"
+       default="$(find jackal_robot)/worlds/crossroad.world" />
+  
+  <!-- Gazebo -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(arg world_file)" />
+    <arg name="paused" value="false"/>
+    <arg name="use_sim_time" value="true"/>
+    <arg name="gui" value="true"/>
+    <arg name="headless" value="false"/>
+    <arg name="debug" value="false"/>
+  </include>
+
+  <!-- Spawn Jackal Robot with accessories -->
+  <include file="$(find jackal_gazebo)/launch/spawn_jackal.launch">
+    <arg name="x" value="$(arg x_pos)" />
+    <arg name="y" value="$(arg y_pos)" />
+    <arg name="z" value="0.1" />
+    <arg name="yaw" value="$(arg yaw)" />
+    <arg name="joystick" value="false" />
+  </include>
+</launch>

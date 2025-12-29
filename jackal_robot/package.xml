@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>jackal_robot</name>
+  <version>0.0.0</version>
+  <description>Jackal custom worlds and launch files</description>
+  <maintainer email="arina@gmail.com">Arina Iusupova</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <exec_depend>roslaunch</exec_depend>
+  <exec_depend>gazebo_ros</exec_depend>
+  <exec_depend>jackal_gazebo</exec_depend>
+</package>
