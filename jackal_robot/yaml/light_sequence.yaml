@@ -1,0 +1,3 @@
+light_sequence:
+  - {color: 'green', duration: 18, flashing: true}
+  - {color: 'red', duration: 8, flashing: false}

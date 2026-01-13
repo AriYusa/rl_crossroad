@@ -8,7 +8,17 @@
 
   <buildtool_depend>catkin</buildtool_depend>
 
+  <depend>roscpp</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>dynamic_reconfigure</depend>
+  <depend>gazebo_ros</depend>
+
   <exec_depend>roslaunch</exec_depend>
-  <exec_depend>gazebo_ros</exec_depend>
   <exec_depend>jackal_gazebo</exec_depend>
+
+  <export>
+    <gazebo_ros gazebo_model_path="${prefix}/models/" />
+    <gazebo plugin_path="${prefix}/lib" />
+  </export>
 </package>

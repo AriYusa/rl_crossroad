@@ -7,6 +7,12 @@
   <arg name="world_file"
        default="$(find jackal_robot)/worlds/crossroad.world" />
   
+  <!-- Load traffic light sequence configuration -->
+  <rosparam ns="traffic_light" file="$(find jackal_robot)/yaml/light_sequence.yaml" />
+  
+  <!-- Set Gazebo model path to include our custom models -->
+  <env name="GAZEBO_MODEL_PATH" value="$(find jackal_robot)/models:$(optenv GAZEBO_MODEL_PATH)" />
+  
   <!-- Gazebo -->
   <include file="$(find gazebo_ros)/launch/empty_world.launch">
     <arg name="world_name" value="$(arg world_file)" />

@@ -9,3 +9,5 @@
     example `docker run -it --rm -e DISPLAY=172.19.192.1:0 ros_noetic:1`
 
 4. Inside docker contailner run `roslaunch jackal_robot crossroad.launch`
+
+To check the state of traffic light use `rostopic echo /traffic_light_left/state` or `rostopic echo /traffic_light_right/state` (they are the same)

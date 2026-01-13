@@ -267,6 +267,24 @@
     </model>
 
 
+    <!-- Traffic Light at Crosswalk - Left Side -->
+    <model name="traffic_light_left">
+      <include>
+        <uri>model://gazebo_traffic_light</uri>
+      </include>
+      <pose>-1.5 -3.5 0 0 0 1.5707</pose>
+      <plugin name="traffic_light_plugin" filename="libgazebo_traffic_light.so" />
+    </model>
+
+    <!-- Traffic Light at Crosswalk - Right Side -->
+    <model name="traffic_light_right">
+      <include>
+        <uri>model://gazebo_traffic_light</uri>
+      </include>
+      <pose>1.5 3.5 0 0 0 -1.5707</pose>
+      <plugin name="traffic_light_plugin" filename="libgazebo_traffic_light.so" />
+    </model>
+
     <!-- Goal Position Marker (Visual Guide) -->
     <model name='goal_position'>
       <static>1</static>
