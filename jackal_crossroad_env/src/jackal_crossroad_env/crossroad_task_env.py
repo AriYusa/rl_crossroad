@@ -61,13 +61,7 @@ class CrossroadEnv(JackalRobotEnv):
             dtype=np.float32
         )
         
-        # Define observation space
-        # Will include: laser scan (simplified to N rays), position, velocity, traffic light state
-        self.num_laser_rays = 10  # Downsample laser scan
-        
-        # Observation: [laser_rays (10), position_x, position_y, velocity_x, velocity_y, 
-        #               yaw, angular_velocity, distance_to_goal, angle_to_goal, traffic_light_state]
-        obs_dim = self.num_laser_rays + 9
+        obs_dim = ...
         
         self.observation_space = spaces.Box(
             low=-np.inf,
@@ -121,126 +115,6 @@ class CrossroadEnv(JackalRobotEnv):
         raw_obs = super(CrossroadEnv, self)._get_obs()
         
         ...
-        
-        
-    
-    def _process_laser_scan(self, laser_scan):
-        """
-        Process laser scan data by downsampling.
-        Args:
-            laser_scan: LaserScan message
-        Returns:
-            numpy array: Processed laser ranges
-        """
-        if laser_scan is None:
-            return np.ones(self.num_laser_rays) * 10.0
-        
-        ranges = np.array(laser_scan.ranges)
-        
-        # Replace inf and nan with max range
-        ranges[np.isinf(ranges)] = laser_scan.range_max
-        ranges[np.isnan(ranges)] = laser_scan.range_max
-        
-        # Downsample by taking evenly spaced samples
-        indices = np.linspace(0, len(ranges) - 1, self.num_laser_rays, dtype=int)
-        downsampled = ranges[indices]
-        
-        return downsampled
-    
-    def _save_laser_scan(self, laser_rays, raw_laser_scan, camera_image=None, averaged_laser_rays=None):
-        """
-        Save laser scan data and camera image to file when collision occurs.
-        Args:
-            laser_rays: Downsampled laser data
-            raw_laser_scan: Full LaserScan message
-            camera_image: Raw camera Image message (optional)
-            averaged_laser_rays: Smoothed laser data used for collision check (optional)
-        """
-        # Create collision_data directory if it doesn't exist
-        save_dir = "/tmp/collision_data"
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-        
-        # Generate filename with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        filename = os.path.join(save_dir, f"collision_{timestamp}.npz")
-        image_filename = os.path.join(save_dir, f"collision_{timestamp}.jpg")
-        
-        # Save full laser scan data
-        if raw_laser_scan is not None:
-            full_ranges = np.array(raw_laser_scan.ranges)
-            # Replace inf and nan with max range for saving
-            full_ranges[np.isinf(full_ranges)] = raw_laser_scan.range_max
-            full_ranges[np.isnan(full_ranges)] = raw_laser_scan.range_max
-            
-            # Prepare data dict
-            data_dict = {
-                'full_ranges': full_ranges,
-                'downsampled_ranges': laser_rays,
-                'angle_min': raw_laser_scan.angle_min,
-                'angle_max': raw_laser_scan.angle_max,
-                'angle_increment': raw_laser_scan.angle_increment,
-                'range_min': raw_laser_scan.range_min,
-                'range_max': raw_laser_scan.range_max,
-                'timestamp': timestamp,
-                'collision_distance_threshold': self.min_laser_distance,
-                'collision_ray_threshold': self.collision_ray_threshold,
-                'proximity_index_offset': self.proximity_index_offset,
-                'num_close_rays': np.sum(
-                    (averaged_laser_rays if averaged_laser_rays is not None else laser_rays)
-                    < self.min_laser_distance)
-            }
-
-            if averaged_laser_rays is not None:
-                data_dict['averaged_downsampled_ranges'] = averaged_laser_rays
-            
-            # Convert and save camera image if available
-            if camera_image is not None:
-                try:
-                    # Convert ROS Image message to OpenCV image
-                    cv_image = self.bridge.imgmsg_to_cv2(camera_image, desired_encoding='bgr8')
-                    
-                    # Save image as JPEG
-                    cv2.imwrite(image_filename, cv_image)
-                    
-                    # Also store image data in npz (as numpy array)
-                    data_dict['camera_image'] = cv_image
-                    data_dict['image_filename'] = image_filename
-                    
-                except Exception as e:
-                    rospy.logwarn(f"Failed to save camera image: {e}")
-            
-            # Save comprehensive data
-            np.savez(filename, **data_dict)
-    
-    def _average_proximity_from_raw(self, laser_rays_indices):
-        """
-        For collision detection: average 3 rays at each sampled position:
-        center index, center-5, and center+5.
-        """
-        if not hasattr(self, '_raw_laser_scan') or self._raw_laser_scan is None:
-            return None
-        
-        ranges = np.array(self._raw_laser_scan.ranges)
-        ranges[np.isinf(ranges)] = self._raw_laser_scan.range_max
-        ranges[np.isnan(ranges)] = self._raw_laser_scan.range_max
-        
-        num_ranges = len(ranges)
-        averaged = np.zeros(len(laser_rays_indices))
-        
-        for i, idx in enumerate(laser_rays_indices):
-            # Take 3 samples: idx-5, idx, idx+5
-            offset = self.proximity_index_offset
-            sample_indices = [
-                max(0, idx - offset),
-                idx,
-                min(num_ranges - 1, idx + offset)
-            ]
-            
-            sample_values = [ranges[si] for si in sample_indices]
-            averaged[i] = np.mean(sample_values)
-        
-        return averaged
 
     
     def _is_done(self, observations):
@@ -251,38 +125,7 @@ class CrossroadEnv(JackalRobotEnv):
         Returns:
             bool: True if episode is done
         """
-        # Extract relevant data
-        laser_rays = observations[:self.num_laser_rays]
-        distance_to_goal = observations[-3]
-        
-        # For collision detection, average neighboring rays from full scan to reduce noise
-        if hasattr(self, '_raw_laser_scan') and self._raw_laser_scan is not None:
-            # Get indices used for downsampling
-            full_scan_len = len(self._raw_laser_scan.ranges)
-            indices = np.linspace(0, full_scan_len - 1, self.num_laser_rays, dtype=int)
-            self.averaged_rays = self._average_proximity_from_raw(indices)
-        else:
-            self.averaged_rays = laser_rays
-        
-        # Check for collision using averaged values
-        close_rays = np.sum(self.averaged_rays < self.min_laser_distance)
-        if close_rays >= self.collision_ray_threshold:
-            # Save laser scan data and camera image
-            # camera_img = self._raw_camera_image if hasattr(self, '_raw_camera_image') else None
-            # if hasattr(self, '_raw_laser_scan'):
-            #     self._save_laser_scan(laser_rays, self._raw_laser_scan, camera_img, self.averaged_rays)
-            return True
-        
-        if distance_to_goal < 0.5:  # Within 0.5m of goal
-            rospy.loginfo("Episode done: Goal reached!")
-            return True
-        
-        # Check max steps
-        if self.current_step >= self.max_episode_steps:
-            rospy.loginfo("Episode done: Max steps reached!")
-            return True
-        
-        return False
+        ...
     
     def _compute_reward(self, observations, done):
         """
@@ -294,6 +137,37 @@ class CrossroadEnv(JackalRobotEnv):
             float: Reward value
         """
         ...
+
+    def _is_collision(self, observations):
+        """Sample laser rays, take a proximity_index_offset and average each ray with its "neighboring" rays. Check that average distances are below threshold for collision."""
+        raw_laser_scan = observations['laser_scan']
+        # Sample laser rays at specified indices
+        ranges = np.array(raw_laser_scan.ranges)
+        ranges[np.isinf(ranges)] = raw_laser_scan.range_max
+        ranges[np.isnan(ranges)] = raw_laser_scan.range_max
+        
+        # Downsample by taking evenly spaced samples
+        indices = np.linspace(0, len(ranges) - 1, self.num_laser_rays, dtype=int)
+        downsampled = ranges[indices]
+        
+        averaged = np.zeros(len(downsampled))
+        
+        for i, idx in enumerate(indices):
+            # Take 3 samples: idx-5, idx, idx+5
+            offset = self.proximity_index_offset
+            sample_indices = [
+                max(0, idx - offset),
+                idx,
+                min(len(ranges) - 1, idx + offset)
+            ]
+            
+            sample_values = [ranges[si] for si in sample_indices]
+            averaged[i] = np.mean(sample_values)
+
+        # Count how many averaged distances are below the minimum distance
+        close_rays = np.sum(averaged < self.min_laser_distance)
+        return close_rays >= self.collision_ray_threshold
+
     
     def step(self, action):
         """
