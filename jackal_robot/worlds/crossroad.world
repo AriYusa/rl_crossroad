@@ -310,18 +310,18 @@
     <model name='wall_left'>
       <static>1</static>
       <link name='link'>
-        <pose>0 -5.5 0.15 0 0 0</pose>
+        <pose>0 -5.5 0.75 0 0 0</pose>
         <collision name='collision'>
           <geometry>
             <box>
-              <size>20 0.1 0.3</size>
+              <size>20 0.1 1.5</size>
             </box>
           </geometry>
         </collision>
         <visual name='visual'>
           <geometry>
             <box>
-              <size>20 0.1 0.3</size>
+              <size>20 0.1 1.5</size>
             </box>
           </geometry>
           <material>
@@ -336,18 +336,70 @@
     <model name='wall_right'>
       <static>1</static>
       <link name='link'>
-        <pose>0 5.5 0.15 0 0 0</pose>
+        <pose>0 5.5 0.75 0 0 0</pose>
         <collision name='collision'>
           <geometry>
             <box>
-              <size>20 0.1 0.3</size>
+              <size>20 0.1 1.5</size>
             </box>
           </geometry>
         </collision>
         <visual name='visual'>
           <geometry>
             <box>
-              <size>20 0.1 0.3</size>
+              <size>20 0.1 1.5</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.6 0.4 0.2 1</ambient>
+            <diffuse>0.6 0.4 0.2 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Front Wall (start side) -->
+    <model name='wall_front'>
+      <static>1</static>
+      <link name='link'>
+        <pose>-10 0 0.75 0 0 0</pose>
+        <collision name='collision'>
+          <geometry>
+            <box>
+              <size>0.1 11 1.5</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>0.1 11 1.5</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.6 0.4 0.2 1</ambient>
+            <diffuse>0.6 0.4 0.2 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Back Wall (goal side) -->
+    <model name='wall_back'>
+      <static>1</static>
+      <link name='link'>
+        <pose>10 0 0.75 0 0 0</pose>
+        <collision name='collision'>
+          <geometry>
+            <box>
+              <size>0.1 11 1.5</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>0.1 11 1.5</size>
             </box>
           </geometry>
           <material>

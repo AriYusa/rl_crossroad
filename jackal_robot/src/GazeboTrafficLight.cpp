@@ -47,7 +47,7 @@ namespace gazebo {
 
     n_.reset(new ros::NodeHandle(model->GetName()));
     light_timer_ = n_->createTimer(ros::Duration(0.1), &GazeboTrafficLight::timerCb, this);
-    state_pub_ = n_->advertise<std_msgs::String>("state", 1, true);
+    state_pub_ = n_->advertise<std_msgs::Int32>("state", 1, true);
     srv_.reset(new dynamic_reconfigure::Server<jackal_robot::GazeboTrafficLightConfig>(*n_));
     srv_->setCallback(boost::bind(&GazeboTrafficLight::reconfig, this, _1, _2));
 
@@ -188,8 +188,8 @@ namespace gazebo {
     // Publish state if color changed
     if (current_color_ != color) {
       current_color_ = color;
-      std_msgs::String msg;
-      msg.data = (color == LightColor::GREEN) ? "green" : "red";
+      std_msgs::Int32 msg;
+      msg.data = (color == LightColor::GREEN) ? 1 : -1;  // -1=RED, 1=GREEN (matching Python env)
       state_pub_.publish(msg);
     }
 
