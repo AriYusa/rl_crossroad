@@ -219,14 +219,14 @@ class JackalRobotEnv(robot_gazebo_env.RobotGazeboEnv):
     def _is_done(self, observations):
         """
         Indicates whether the episode is done.
-        This will be overridden in the task environment.
+        This will be overwitten in the task environment.
         """
         return False
     
     def _compute_reward(self, observations, done):
         """
         Calculates the reward.
-        This will be overridden in the task environment.
+        This will be overwritten in the task environment.
         """
         return 0
     

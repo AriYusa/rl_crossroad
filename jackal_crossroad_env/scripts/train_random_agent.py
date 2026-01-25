@@ -25,7 +25,7 @@ def main():
     rospy.loginfo("Action space: {}".format(env.action_space))
     
     # Training parameters
-    num_episodes = 100
+    num_episodes = 200
     max_steps_per_episode = 1000
     
     # Statistics
@@ -68,13 +68,19 @@ def main():
             
     except KeyboardInterrupt:
         rospy.loginfo("Training interrupted by user")
+    except Exception as e:
+        rospy.logerr("Training crashed: {}".format(e))
+        raise
     
     finally:
         rospy.loginfo("Training finished!")
         rospy.loginfo("Total episodes: {}".format(len(episode_rewards)))
-        rospy.loginfo("Average reward: {:.2f}".format(np.mean(episode_rewards)))
-        rospy.loginfo("Max reward: {:.2f}".format(np.max(episode_rewards)))
-        rospy.loginfo("Min reward: {:.2f}".format(np.min(episode_rewards)))
+        if episode_rewards:
+            rospy.loginfo("Average reward: {:.2f}".format(np.mean(episode_rewards)))
+            rospy.loginfo("Max reward: {:.2f}".format(np.max(episode_rewards)))
+            rospy.loginfo("Min reward: {:.2f}".format(np.min(episode_rewards)))
+        else:
+            rospy.loginfo("No episodes completed.")
 
 
 if __name__ == '__main__':
