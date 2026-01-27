@@ -15,6 +15,7 @@ import os
 from datetime import datetime
 from cv_bridge import CvBridge
 import cv2
+from gazebo_msgs.srv import GetModelState
 
 
 class CrossroadEnv(JackalRobotEnv):
@@ -64,14 +65,37 @@ class CrossroadEnv(JackalRobotEnv):
             dtype=np.float32
         )
         
-        obs_dim = 5 + self.num_laser_rays  # [distance, heading_err, lin_vel, ang_vel, traffic] + laser rays
-        
-        self.observation_space = spaces.Box(
-            low=-np.inf,
-            high=np.inf,
-            shape=(obs_dim,),
-            dtype=np.float32
-        )
+        # Define observation space as a Dict
+        # raw_image: camera image (height, width, channels)
+        # laser_scan: laser range data
+        # robot_coords: [x, y, yaw]
+        # goal_coords: [x, y]
+        self.observation_space = spaces.Dict({
+            'raw_image': spaces.Box(
+                low=0,
+                high=255,
+                shape=(480, 640, 3),  # Standard camera resolution
+                dtype=np.uint8
+            ),
+            'laser_scan': spaces.Box(
+                low=0.0,
+                high=30.0,
+                shape=(self.num_laser_rays,),
+                dtype=np.float32
+            ),
+            'robot_coords': spaces.Box(
+                low=np.array([-np.inf, -np.inf, -np.pi]),
+                high=np.array([np.inf, np.inf, np.pi]),
+                shape=(3,),
+                dtype=np.float32
+            ),
+            'goal_coords': spaces.Box(
+                low=np.array([-np.inf, -np.inf]),
+                high=np.array([np.inf, np.inf]),
+                shape=(2,),
+                dtype=np.float32
+            )
+        })
         
         rospy.logdebug("Finished JackalCrossroadEnv INIT...")
     
@@ -112,47 +136,53 @@ class CrossroadEnv(JackalRobotEnv):
         """
         Get current observation from the environment.
         Returns:
-            numpy array: Observation vector
+            dict: Observation dictionary with raw_image, laser_scan, robot_coords, goal_coords
         """
         # Get raw sensor data from parent class
         raw_obs = super(CrossroadEnv, self)._get_obs()
-        laser_scan = raw_obs['laser_scan']
-        odom = raw_obs['odom']
-        traffic_light = raw_obs['traffic_light']
-
-        # Pose and heading
-        pos = odom.pose.pose.position
-        orient = odom.pose.pose.orientation
-        yaw = tf.transformations.euler_from_quaternion(
-            [orient.x, orient.y, orient.z, orient.w]
-        )[2]
-
-        # Goal features
-        dx = self.goal_position[0] - pos.x
-        dy = self.goal_position[1] - pos.y
-        # Manhattan distance for curriculum phase 1 (road crossing)
-        distance = abs(dx) + abs(dy)
-        heading = np.arctan2(dy, dx)
-        heading_error = self._normalize_angle(heading - yaw)
-
-        # Velocities
-        lin_vel = odom.twist.twist.linear.x
-        ang_vel = odom.twist.twist.angular.z
-
-        # Laser downsample
-        ranges = np.array(laser_scan.ranges, dtype=np.float32)
-        ranges[np.isinf(ranges)] = laser_scan.range_max
-        ranges[np.isnan(ranges)] = laser_scan.range_max
-        if len(ranges) == 0:
-            laser = np.zeros(self.num_laser_rays, dtype=np.float32)
+        laser_scan_msg = raw_obs['laser_scan']
+        camera_image_msg = raw_obs['camera_image']
+        
+        # Get ground truth pose from Gazebo model state
+        robot_coords = self._get_robot_ground_truth_pose()
+        
+        # Process camera image
+        if camera_image_msg is not None:
+            try:
+                cv_image = self.bridge.imgmsg_to_cv2(camera_image_msg, "bgr8")
+                # Ensure consistent size (resize if needed)
+                if cv_image.shape != (480, 640, 3):
+                    cv_image = cv2.resize(cv_image, (640, 480))
+                raw_image = cv_image.astype(np.uint8)
+            except Exception as e:
+                rospy.logwarn(f"Error converting image: {e}")
+                raw_image = np.zeros((480, 640, 3), dtype=np.uint8)
         else:
-            indices = np.linspace(0, len(ranges) - 1, self.num_laser_rays, dtype=int)
-            laser = ranges[indices].astype(np.float32)
-
-        obs = np.concatenate((
-            np.array([distance, heading_error, lin_vel, ang_vel, float(traffic_light)], dtype=np.float32),
-            laser
-        ))
+            raw_image = np.zeros((480, 640, 3), dtype=np.uint8)
+        
+        # Process laser scan
+        if laser_scan_msg is not None:
+            ranges = np.array(laser_scan_msg.ranges, dtype=np.float32)
+            ranges[np.isinf(ranges)] = laser_scan_msg.range_max
+            ranges[np.isnan(ranges)] = laser_scan_msg.range_max
+            if len(ranges) > 0:
+                indices = np.linspace(0, len(ranges) - 1, self.num_laser_rays, dtype=int)
+                laser_scan = ranges[indices].astype(np.float32)
+            else:
+                laser_scan = np.zeros(self.num_laser_rays, dtype=np.float32)
+        else:
+            laser_scan = np.zeros(self.num_laser_rays, dtype=np.float32)
+        
+        # Goal coordinates
+        goal_coords = self.goal_position.astype(np.float32)
+        
+        obs = {
+            'raw_image': raw_image,
+            'laser_scan': laser_scan,
+            'robot_coords': robot_coords,
+            'goal_coords': goal_coords
+        }
+        
         return obs
 
     
@@ -160,15 +190,19 @@ class CrossroadEnv(JackalRobotEnv):
         """
         Check if episode should terminate.
         Args:
-            observations: Current observation
+            observations: Current observation dict
         Returns:
             bool: True if episode is done
         """
-        if observations is None or len(observations) == 0:
+        if observations is None or not isinstance(observations, dict):
             return False
-
-        distance = observations[0]
-        if self._is_collision(observations):
+        
+        # Calculate distance to goal
+        robot_coords = observations.get('robot_coords', np.zeros(3))
+        goal_coords = observations.get('goal_coords', np.zeros(2))
+        distance = np.linalg.norm(robot_coords[:2] - goal_coords)
+        
+        if self._is_collision():
             return True
         if distance < self.goal_threshold:
             return True
@@ -180,15 +214,19 @@ class CrossroadEnv(JackalRobotEnv):
         """
         Compute reward for current step.
         Args:
-            observations: Current observation
+            observations: Current observation dict
             done: Whether episode is done
         Returns:
             float: Reward value
         """
-        if observations is None or len(observations) == 0:
+        if observations is None or not isinstance(observations, dict):
             return 0.0
-
-        distance = observations[0]
+        
+        # Calculate distance to goal
+        robot_coords = observations.get('robot_coords', np.zeros(3))
+        goal_coords = observations.get('goal_coords', np.zeros(2))
+        distance = np.linalg.norm(robot_coords[:2] - goal_coords)
+        
         if self._is_collision(observations):
             return -100.0
         if distance < self.goal_threshold:
@@ -203,20 +241,22 @@ class CrossroadEnv(JackalRobotEnv):
         # Small step penalty to encourage efficiency
         return (progress * 10.0) - 0.01
 
-    def _is_collision(self, observations=None):
-        """Sample laser rays, take a proximity_index_offset and average each ray with its "neighboring" rays. Check that average distances are below threshold for collision."""
-        if observations is not None and isinstance(observations, dict):
-            raw_laser_scan = observations.get('laser_scan')
-        else:
-            raw_laser_scan = self.laser_scan
-        if raw_laser_scan is None:
+    def _is_collision(self):
+        """
+        Sample laser rays, take a proximity_index_offset and average each ray with its "neighboring" rays.
+        Check that average distances are below threshold for collision.
+        """
+
+        full_laser_scan = self.laser_scan
+
+        if full_laser_scan is None:
             return False
         # Sample laser rays at specified indices
-        ranges = np.array(raw_laser_scan.ranges, dtype=np.float32)
+        ranges = np.array(full_laser_scan.ranges, dtype=np.float32)
         if len(ranges) == 0:
             return False
-        ranges[np.isinf(ranges)] = raw_laser_scan.range_max
-        ranges[np.isnan(ranges)] = raw_laser_scan.range_max
+        ranges[np.isinf(ranges)] = full_laser_scan.range_max
+        ranges[np.isnan(ranges)] = full_laser_scan.range_max
         
         # Downsample by taking evenly spaced samples
         indices = np.linspace(0, len(ranges) - 1, self.num_laser_rays, dtype=int)
@@ -240,12 +280,30 @@ class CrossroadEnv(JackalRobotEnv):
         close_rays = np.sum(averaged < self.min_laser_distance)
         return close_rays >= self.collision_ray_threshold
 
-    @staticmethod
-    def _normalize_angle(angle):
-        """Normalize angle to [-pi, pi]."""
-        return (angle + np.pi) % (2 * np.pi) - np.pi
-
+    def _get_robot_ground_truth_pose(self):
+        """
+        Get ground truth robot pose from Gazebo.
+        Returns:
+            np.array: [x, y, yaw]
+        """
+        try:
+            from gazebo_msgs.srv import GetModelState
+            get_state = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState)
+            model_state = get_state('jackal', '')
+            
+            x = model_state.pose.position.x
+            y = model_state.pose.position.y
+            orient = model_state.pose.orientation
+            yaw = tf.transformations.euler_from_quaternion(
+                [orient.x, orient.y, orient.z, orient.w]
+            )[2]
+            
+            return np.array([x, y, yaw], dtype=np.float32)
+        except Exception as e:
+            rospy.logwarn(f"Could not get ground truth pose: {e}")
+            return np.array([0.0, 0.0, 0.0], dtype=np.float32)
     
+
     def step(self, action):
         """
         Execute one step in the environment.

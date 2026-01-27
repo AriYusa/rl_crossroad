@@ -68,8 +68,26 @@ cd /catkin_ws/jackal_crossroad_env/scripts
 python3 train_....
 ```
 
+## Robot Configuration
+
+### Sensors
+
+- **Laser Scanner**: Front-mounted LIDAR (topic: `/front/scan`)
+  - Used for obstacle detection and collision avoidance
+  - 20 downsampled rays in observation space
+  
+- **Camera**: Point Grey Flea3 RGB camera (topic: `/front/image_raw`)
+  - Resolution: 640x480 pixels, 3 channels (BGR)
+  - Front-facing for visual perception
+  - Configured via environment variable: `JACKAL_FLEA3=1`
+
 ### Observation Space
 
+Dictionary observation containing:
+- **`raw_image`**: RGB camera image (480×640×3 uint8 array)
+- **`laser_scan`**: downsamples rays
+- **`robot_coords`**: Ground truth robot pose from Gazebo [x, y, yaw] (3 float32 values)
+- **`goal_coords`**: Target goal position [x, y] (2 float32 values)
 
 ### Action Space
 

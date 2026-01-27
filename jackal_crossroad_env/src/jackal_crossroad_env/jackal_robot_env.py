@@ -106,7 +106,7 @@ class JackalRobotEnv(robot_gazebo_env.RobotGazeboEnv):
         rospy.logdebug("Waiting for all sensors to be ready...")
         
         self._check_laser_scan_ready()
-        self._check_odom_ready()
+        # self._check_odom_ready()  # We use ground truth Gazebo coords instead of odom for simplicity
         self._check_traffic_light_ready()
         self._check_camera_ready()
         
