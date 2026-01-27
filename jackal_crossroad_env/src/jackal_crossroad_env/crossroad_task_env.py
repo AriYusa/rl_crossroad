@@ -46,6 +46,12 @@ class CrossroadEnv(JackalRobotEnv):
         self.num_laser_rays = 20  # downsampled laser rays used in observations
         self.goal_threshold = 1  # goal threshold (meters)
         
+        # Reward parameters
+        self.collision_penalty = -100.0  # Penalty for collision
+        self.goal_reward = 100.0  # Reward for reaching goal
+        self.progress_multiplier = 10.0  # Multiplier for progress towards goal
+        self.step_penalty = 0.01  # Penalty for each step (encourages efficiency)
+        
         # Episode parameters
         self.max_episode_steps = 1000
         self.current_step = 0
@@ -228,9 +234,9 @@ class CrossroadEnv(JackalRobotEnv):
         distance = np.linalg.norm(robot_coords[:2] - goal_coords)
         
         if self._is_collision(observations):
-            return -100.0
+            return self.collision_penalty
         if distance < self.goal_threshold:
-            return 100.0
+            return self.goal_reward
 
         if not hasattr(self, 'previous_distance_to_goal'):
             self.previous_distance_to_goal = distance
@@ -239,7 +245,7 @@ class CrossroadEnv(JackalRobotEnv):
         self.previous_distance_to_goal = distance
 
         # Small step penalty to encourage efficiency
-        return (progress * 10.0) - 0.01
+        return (progress * self.progress_multiplier) - self.step_penalty
 
     def _is_collision(self):
         """
