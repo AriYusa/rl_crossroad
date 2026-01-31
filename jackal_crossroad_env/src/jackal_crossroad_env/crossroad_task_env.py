@@ -52,9 +52,9 @@ class CrossroadEnv(JackalRobotEnv):
         
         # Goal randomization parameters
         self.spawn_goal_on_sidewalk_only = True
-        self.initial_noise_level = 0.5  # Initial noise in meters
-        self.max_noise_level = 5.0  # Maximum noise in meters
-        self.noise_increase_rate = 0.5  # Noise increase per episode
+        self.initial_noise_level = 0.1  # Initial noise in meters
+        self.max_noise_level = 4.0  # Maximum noise in meters
+        self.noise_increase_rate = 0.005  # Noise increase per episode
         self.episode_count = 0  # Track total episodes
         self.current_noise_level = self.initial_noise_level
 
