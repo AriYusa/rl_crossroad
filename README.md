@@ -29,10 +29,20 @@ Install an X client (e.g., XLaunch for Windows) and run it with these settings:
 Check your IP address (172.xxx....) and run:
 
 ```bash
-docker run -it --rm -e DISPLAY=<your_ip>:0 ros_noetic:1
+docker run -it --rm --name ros_container -e DISPLAY=<your_ip>:0 ros_noetic:1
 ```
 
-Example: `docker run -it --rm -e DISPLAY=172.19.192.1:0 ros_noetic:1`
+Example: `docker run -it --rm --name ros_container -e DISPLAY=172.19.192.1:0 ros_noetic:1`
+
+### 4. Open Another Terminal with the Container
+
+To open an additional terminal in the same running container:
+
+```bash
+docker exec -it ros_container bash
+```
+
+This allows you to run multiple commands simultaneously in the same container (e.g., one for the simulation and one for training).
 
 ## Usage
 
@@ -65,11 +75,29 @@ roslaunch jackal_robot crossroad.launch
 
 # Terminal 2: Run training
 cd /catkin_ws/jackal_crossroad_env/scripts
-python3 train_....
+python3 train_geometric_agent.py
 ```
+
+## Robot Configuration
+
+### Sensors
+
+- **Laser Scanner**: Front-mounted LIDAR (topic: `/front/scan`)
+  - Used for obstacle detection and collision avoidance
+  - 20 downsampled rays in observation space
+  
+- **Camera**: Point Grey Flea3 RGB camera (topic: `/front/image_raw`)
+  - Resolution: 640x480 pixels, 3 channels (BGR)
+  - Front-facing for visual perception
+  - Configured via environment variable: `JACKAL_FLEA3=1`
 
 ### Observation Space
 
+Dictionary observation containing:
+- **`raw_image`**: RGB camera image (480×640×3 uint8 array)
+- **`laser_scan`**: downsamples rays
+- **`robot_coords`**: Ground truth robot pose from Gazebo [x, y, yaw] (3 float32 values)
+- **`goal_coords`**: Target goal position [x, y] (2 float32 values)
 
 ### Action Space
 

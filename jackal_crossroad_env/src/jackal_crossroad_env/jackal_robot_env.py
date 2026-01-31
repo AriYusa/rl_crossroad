@@ -106,7 +106,7 @@ class JackalRobotEnv(robot_gazebo_env.RobotGazeboEnv):
         rospy.logdebug("Waiting for all sensors to be ready...")
         
         self._check_laser_scan_ready()
-        self._check_odom_ready()
+        # self._check_odom_ready()  # We use ground truth Gazebo coords instead of odom for simplicity
         self._check_traffic_light_ready()
         self._check_camera_ready()
         
@@ -219,14 +219,14 @@ class JackalRobotEnv(robot_gazebo_env.RobotGazeboEnv):
     def _is_done(self, observations):
         """
         Indicates whether the episode is done.
-        This will be overridden in the task environment.
+        This will be overwitten in the task environment.
         """
         return False
     
     def _compute_reward(self, observations, done):
         """
         Calculates the reward.
-        This will be overridden in the task environment.
+        This will be overwritten in the task environment.
         """
         return 0
     
