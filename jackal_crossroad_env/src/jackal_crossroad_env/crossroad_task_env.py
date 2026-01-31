@@ -35,17 +35,38 @@ class CrossroadEnv(JackalRobotEnv):
         rospy.logdebug("Start JackalCrossroadEnv INIT...")
         
         # Task-specific parameters
-        self.goal_position = np.array([10.0, 0.0])  # Goal position (x, y)
+        self.base_goal_position = np.array([5.0, 4.5])  # Base goal position (x, y)
         # keep the start on the pavement (matches launch default y=-4.5)
         self.start_position = np.array([-5.0, -4.5])  # Start position
+        self.goal_threshold = 0.3  # goal threshold (meters) - same as visulaision radius 
+
+        # Map boundaries
+        self.map_x_min = -10.0
+        self.map_x_max = 10.0
+        self.map_y_min = -5.5
+        self.map_y_max = 5.5
+        
+        # Road boundaries
+        self.road_y_min = -3.5
+        self.road_y_max = 3.5
+        
+        # Goal randomization parameters
+        self.spawn_goal_on_sidewalk_only = True
+        self.initial_noise_level = 0.5  # Initial noise in meters
+        self.max_noise_level = 5.0  # Maximum noise in meters
+        self.noise_increase_rate = 0.5  # Noise increase per episode
+        self.episode_count = 0  # Track total episodes
+        self.current_noise_level = self.initial_noise_level
+
+        # Initialize goal position with randomness
+        self.goal_position = self._generate_random_goal()
         
         # Collision detection parameters
         self.min_laser_distance = 0.3  # Minimum safe distance to obstacles (meters)
         self.collision_ray_threshold = 3  # Number of rays that must detect obstacle for collision
         self.proximity_index_offset = 5  # Number of indices on each side for averaging (center, -5, +5)
         self.num_laser_rays = 20  # downsampled laser rays used in observations
-        self.goal_threshold = 1  # goal threshold (meters)
-        
+
         # Reward parameters
         self.collision_penalty = -100.0  # Penalty for collision
         self.goal_reward = 100.0  # Reward for reaching goal
@@ -209,10 +230,13 @@ class CrossroadEnv(JackalRobotEnv):
         distance = np.linalg.norm(robot_coords[:2] - goal_coords)
         
         if self._is_collision():
+            rospy.loginfo("Episode done: Collision detected")
             return True
         if distance < self.goal_threshold:
+            rospy.loginfo("Episode done: Goal reached")
             return True
         if self.current_step >= self.max_episode_steps:
+            rospy.loginfo("Episode done: Maximum steps reached")
             return True
         return False
     
@@ -233,7 +257,7 @@ class CrossroadEnv(JackalRobotEnv):
         goal_coords = observations.get('goal_coords', np.zeros(2))
         distance = np.linalg.norm(robot_coords[:2] - goal_coords)
         
-        if self._is_collision(observations):
+        if self._is_collision():
             return self.collision_penalty
         if distance < self.goal_threshold:
             return self.goal_reward
@@ -309,6 +333,57 @@ class CrossroadEnv(JackalRobotEnv):
             rospy.logwarn(f"Could not get ground truth pose: {e}")
             return np.array([0.0, 0.0, 0.0], dtype=np.float32)
     
+    def _is_on_road(self, y_position):
+        """
+        Check if a y-coordinate is on the road.
+        Args:
+            y_position: y-coordinate to check
+        Returns:
+            bool: True if position is on the road
+        """
+        return self.road_y_min <= y_position <= self.road_y_max
+    
+    def _generate_random_goal(self):
+        """
+        Generate a random goal position with noise that increases over episodes.
+        Ensures the goal is within map boundaries and optionally on sidewalk only.
+        If spawn_goal_on_sidewalk_only is True, goal spawns on opposite side of road from robot.
+        Returns:
+            np.array: [x, y] goal position
+        """
+        # Goal marker has radius 0.3, so add buffer to avoid visual clipping
+        marker_radius = self.goal_threshold
+        
+        # Generate x coordinate with noise, constrained to map boundaries with buffer
+        x_min = max(self.map_x_min + marker_radius, self.base_goal_position[0] - self.current_noise_level)
+        x_max = min(self.map_x_max - marker_radius, self.base_goal_position[0] + self.current_noise_level)
+        goal_x = np.random.uniform(x_min, x_max)
+        
+        if not self.spawn_goal_on_sidewalk_only:
+            # No sidewalk constraint, spawn anywhere within noise range with buffer
+            y_min = max(self.map_y_min + marker_radius, self.base_goal_position[1] - self.current_noise_level)
+            y_max = min(self.map_y_max - marker_radius, self.base_goal_position[1] + self.current_noise_level)
+            goal_y = np.random.uniform(y_min, y_max)
+        
+            return np.array([goal_x, goal_y], dtype=np.float32)
+        
+        # If sidewalk only, determine side based on robot position
+        # Determine which side of road the robot is on
+        robot_y = self.start_position[1]
+        
+        if robot_y < self.road_y_min:
+            # Robot is on lower sidewalk, spawn goal on upper sidewalk
+            y_min = max(self.road_y_max + marker_radius, self.base_goal_position[1] - self.current_noise_level)
+            y_max = min(self.map_y_max - marker_radius, self.base_goal_position[1] + self.current_noise_level)
+        else:
+            # Robot is on upper sidewalk (or on road), spawn goal on lower sidewalk
+            # Use negative of base position for opposite sidewalk
+            opposite_base_y = -self.base_goal_position[1]
+            y_min = max(self.map_y_min + marker_radius, opposite_base_y - self.current_noise_level)
+            y_max = min(self.road_y_min - marker_radius, opposite_base_y + self.current_noise_level)
+        
+        goal_y = np.random.uniform(y_min, y_max)
+        return np.array([goal_x, goal_y], dtype=np.float32)
 
     def step(self, action):
         """
@@ -382,8 +457,16 @@ class CrossroadEnv(JackalRobotEnv):
         if hasattr(self, 'previous_distance_to_goal'):
             delattr(self, 'previous_distance_to_goal')
         
-        # Unpause to get observation
-        self.gazebo.unpauseSim()
+        # Update noise level for next episode
+        self.episode_count += 1
+        self.current_noise_level = min(
+            self.initial_noise_level + (self.episode_count * self.noise_increase_rate),
+            self.max_noise_level
+        )
+        rospy.loginfo(f"Episode {self.episode_count}")
+        
+        # Generate new random goal for this episode
+        self.goal_position = self._generate_random_goal()
         
         # Get initial observation
         obs = self._get_obs()
