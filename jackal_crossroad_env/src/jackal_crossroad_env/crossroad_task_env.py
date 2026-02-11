@@ -101,7 +101,7 @@ class CrossroadEnv(JackalRobotEnv):
             'raw_image': spaces.Box(
                 low=0,
                 high=255,
-                shape=(480, 640, 3),  # Standard camera resolution
+                shape=(120, 160, 3),  # Reduced resolution for memory efficiency
                 dtype=np.uint8
             ),
             'laser_scan': spaces.Box(
@@ -178,14 +178,14 @@ class CrossroadEnv(JackalRobotEnv):
             try:
                 cv_image = self.bridge.imgmsg_to_cv2(camera_image_msg, "bgr8")
                 # Ensure consistent size (resize if needed)
-                if cv_image.shape != (480, 640, 3):
-                    cv_image = cv2.resize(cv_image, (640, 480))
+                if cv_image.shape != (120, 160, 3):
+                    cv_image = cv2.resize(cv_image, (160, 120))
                 raw_image = cv_image.astype(np.uint8)
             except Exception as e:
                 rospy.logwarn(f"Error converting image: {e}")
-                raw_image = np.zeros((480, 640, 3), dtype=np.uint8)
+                raw_image = np.zeros((120, 160, 3), dtype=np.uint8)
         else:
-            raw_image = np.zeros((480, 640, 3), dtype=np.uint8)
+            raw_image = np.zeros((120, 160, 3), dtype=np.uint8)
         
         # Process laser scan
         if laser_scan_msg is not None:

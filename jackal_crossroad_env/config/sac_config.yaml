@@ -1,0 +1,112 @@
+# SAC Hyperparameter Configuration for Jackal Crossroad Environment
+# Modify these values to tune the agent's performance
+
+# Environment
+env_id: "JackalCrossroad-v0"
+
+# ==================== SAC Core Hyperparameters ====================
+# Learning rate for actor/critic networks
+learning_rate: 3.0e-4
+
+# Replay buffer size (larger = more memory, better sample efficiency)
+buffer_size: 10000
+
+# Number of steps before starting training
+learning_starts: 1000
+
+# Mini-batch size for gradient updates
+batch_size: 256
+
+# Soft update coefficient for target networks (tau)
+# Lower = slower, more stable updates
+tau: 0.005
+
+# Discount factor (gamma)
+# Higher = agent values future rewards more
+gamma: 0.99
+
+# How often to update the policy (in steps)
+train_freq: 1
+
+# Number of gradient steps per update
+gradient_steps: 1
+
+# Entropy coefficient
+# "auto" = automatically tuned
+# or set a fixed value like 0.2
+ent_coef: "auto"
+
+# Target entropy for auto-tuning
+# "auto" = -dim(action_space)
+target_entropy: "auto"
+
+# Interval for target network updates
+target_update_interval: 1
+
+# ==================== State Dependent Exploration ====================
+# Use generalized State Dependent Exploration
+use_sde: false
+
+# Sample frequency for SDE (-1 = sample new noise at each step)
+sde_sample_freq: -1
+
+# ==================== Network Architecture ====================
+# Use lightweight extractor (skips image processing)
+# Set to true for faster initial testing
+use_lightweight_extractor: false
+
+# Feature dimensions for multi-modal extractor
+image_features_dim: 256
+lidar_features_dim: 64
+coord_features_dim: 32
+combined_features_dim: 256
+
+# Hidden layer sizes for actor/critic networks
+net_arch: [256, 256]
+
+# ==================== Optimization ====================
+# Maximum gradient norm for clipping
+gradient_clip: 0.5
+
+# Adam optimizer epsilon (helps with numerical stability)
+optimizer_eps: 1.0e-5
+
+# ==================== Training Schedule ====================
+# Total timesteps to train
+total_timesteps: 500000
+
+# Evaluation frequency (in timesteps)
+eval_freq: 10000
+
+# Number of episodes for evaluation
+n_eval_episodes: 5
+
+# Checkpoint save frequency (in timesteps)
+checkpoint_freq: 25000
+
+# ==================== Logging ====================
+# Enable Weights & Biases logging
+use_wandb: true
+
+# W&B project name
+wandb_project: "jackal-crossroad-sac"
+
+# W&B entity (username or team name)
+wandb_entity: null
+
+# Log interval (in episodes)
+log_interval: 10
+
+# ==================== Paths ====================
+# Directory for checkpoints
+save_dir: "./sac_checkpoints"
+
+# Directory for logs
+log_dir: "./sac_logs"
+
+# ==================== Reproducibility ====================
+# Random seed for reproducibility
+seed: 42
+
+# Device selection: "auto", "cuda", "cpu"
+device: "auto"
