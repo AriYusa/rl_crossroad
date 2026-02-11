@@ -38,7 +38,6 @@ from wandb.integration.sb3 import WandbCallback
 import jackal_crossroad_env  # Registers the environment
 from feature_extractor import (
     MultiModalFeatureExtractor,
-    LightweightMultiModalExtractor,
 )
 
 
@@ -63,7 +62,6 @@ DEFAULT_CONFIG = {
     "sde_sample_freq": -1,
     
     # Network Architecture
-    "use_lightweight_extractor": False,  # Use lightweight (no image) extractor
     "image_features_dim": 256,
     "lidar_features_dim": 64,
     "coord_features_dim": 32,
@@ -230,19 +228,13 @@ def create_env(config):
 def create_policy_kwargs(config, observation_space):
     """Create policy keyword arguments with custom feature extractor."""
     
-    if config["use_lightweight_extractor"]:
-        features_extractor_class = LightweightMultiModalExtractor
-        features_extractor_kwargs = {
-            "features_dim": config["combined_features_dim"],
-        }
-    else:
-        features_extractor_class = MultiModalFeatureExtractor
-        features_extractor_kwargs = {
-            "image_features_dim": config["image_features_dim"],
-            "lidar_features_dim": config["lidar_features_dim"],
-            "coord_features_dim": config["coord_features_dim"],
-            "combined_features_dim": config["combined_features_dim"],
-        }
+    features_extractor_class = MultiModalFeatureExtractor
+    features_extractor_kwargs = {
+        "image_features_dim": config["image_features_dim"],
+        "lidar_features_dim": config["lidar_features_dim"],
+        "coord_features_dim": config["coord_features_dim"],
+        "combined_features_dim": config["combined_features_dim"],
+    }
     
     policy_kwargs = {
         "features_extractor_class": features_extractor_class,
@@ -278,7 +270,6 @@ def create_sac_model(env, config):
         use_sde=config["use_sde"],
         sde_sample_freq=config["sde_sample_freq"],
         policy_kwargs=policy_kwargs,
-        replay_buffer_kwargs=dict(optimize_memory_usage=True),
         verbose=1,
         seed=config["seed"],
         device=config["device"],
@@ -404,7 +395,6 @@ def main():
     parser = argparse.ArgumentParser(description="Train SAC agent for Jackal Crossroad")
     parser.add_argument("--config", type=str, default=None, help="Path to config YAML file")
     parser.add_argument("--no-wandb", action="store_true", help="Disable wandb logging")
-    parser.add_argument("--lightweight", action="store_true", help="Use lightweight extractor (no image)")
     parser.add_argument("--timesteps", type=int, default=None, help="Total training timesteps")
     parser.add_argument("--seed", type=int, default=None, help="Random seed")
     parser.add_argument("--device", type=str, default=None, help="Device (auto/cuda/cpu)")
@@ -419,8 +409,6 @@ def main():
     # Override with command line arguments
     if args.no_wandb:
         config["use_wandb"] = False
-    if args.lightweight:
-        config["use_lightweight_extractor"] = True
     if args.timesteps:
         config["total_timesteps"] = args.timesteps
     if args.seed:

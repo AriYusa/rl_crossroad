@@ -51,10 +51,6 @@ use_sde: false
 sde_sample_freq: -1
 
 # ==================== Network Architecture ====================
-# Use lightweight extractor (skips image processing)
-# Set to true for faster initial testing
-use_lightweight_extractor: false
-
 # Feature dimensions for multi-modal extractor
 image_features_dim: 256
 lidar_features_dim: 64
