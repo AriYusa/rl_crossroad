@@ -217,11 +217,24 @@ class MultiModalFeatureExtractor(BaseFeaturesExtractor):
         Returns:
             Combined feature tensor of shape (batch, combined_features_dim)
         """
-        # Process image: (batch, 120, 160, 3) -> (batch, 3, 120, 160)
-        image = observations['raw_image'].float() / 255.0
+        # Process image robustly: accept NHWC or NCHW.
+        image = observations['raw_image']
         if image.dim() == 3:
             image = image.unsqueeze(0)
-        image = image.permute(0, 3, 1, 2)  # NHWC -> NCHW
+
+        if image.dim() != 4:
+            raise ValueError(f"Expected 4D image tensor, got shape {tuple(image.shape)}")
+
+        # If channel-last (B, H, W, C), move to channel-first (B, C, H, W).
+        if image.shape[-1] == 3:
+            image = image.permute(0, 3, 1, 2)
+        elif image.shape[1] != 3:
+            raise ValueError(f"Unsupported image layout for raw_image: {tuple(image.shape)}")
+
+        image = image.float()
+        # SB3 usually normalizes images to [0, 1] already; normalize only when needed.
+        if image.max() > 1.0:
+            image = image / 255.0
         
         image = nn.functional.interpolate(image, size=(224, 224), mode='bilinear', align_corners=False)
         image_features = self.image_encoder(image)
