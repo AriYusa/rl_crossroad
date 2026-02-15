@@ -56,10 +56,10 @@ class JackalRobotEnv(robot_gazebo_env.RobotGazeboEnv):
         self.odom = None
         self.traffic_light_state = None
         self.camera_image = None
-        self.green_light_states = {1}
-        self.red_light_states = {-1}
+        self.green_light_states = {1}       # 1 ... green 
+        self.red_light_states = {-1}        # -1 ... red 
 
-        # Define publishers and subscribers (after state init to avoid callback races)
+        # Define publishers and subscribers (later to prevent crashes D:)
         self._setup_publishers()
         self._setup_subscribers()
         
@@ -108,7 +108,7 @@ class JackalRobotEnv(robot_gazebo_env.RobotGazeboEnv):
         red_states = getattr(self, "red_light_states", {-1})
         if previous_state in green_states and current_state in red_states:
             rospy.loginfo(
-                "Traffic light transition detected: GREEN -> RED "
+                "Traffic light transition detected: GREEN -> RED "      # logging for debugging
                 f"(left_state={previous_state}->{current_state})"
             )
     

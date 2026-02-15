@@ -1,4 +1,4 @@
 light_sequence:
-  - {color: 'green', duration: 18000, flashing: false}       # 10 too tight
+  - {color: 'green', duration: 18000, flashing: false}       # 10 ... default
   - {color: 'green', duration: 3, flashing: true}
   - {color: 'red', duration: 8, flashing: false}          

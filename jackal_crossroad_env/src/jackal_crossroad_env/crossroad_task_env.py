@@ -109,7 +109,7 @@ class CrossroadEnv(JackalRobotEnv):
         self.previous_distance_to_active_goal = None
         self.crossing_direction = 1.0
 
-        # Visualization markers for staged goals in Gazebo
+        # Visualization for goals in Gazebo
         self.goal_marker_names = [
             "goal_stage_1_marker",
             "goal_stage_2_marker",
@@ -128,14 +128,14 @@ class CrossroadEnv(JackalRobotEnv):
         self.goal_marker_specs = [
             {
                 "shape": "box",
-                "size": (self.subgoal_marker_size_x, self.subgoal_marker_size_y, self.goal_marker_height),
+                "size": (self.subgoal_marker_size_x, self.subgoal_marker_size_y, self.goal_marker_height),  # rect for crosswalk
             },
             {
                 "shape": "box",
-                "size": (self.subgoal_marker_size_x, self.subgoal_marker_size_y, self.goal_marker_height),
+                "size": (self.subgoal_marker_size_x, self.subgoal_marker_size_y, self.goal_marker_height),  # rect for crosswalk
             },
             {
-                "shape": "cylinder",
+                "shape": "cylinder",    # cyl for endgoal
                 "radius": self.final_goal_marker_radius,
                 "length": self.goal_marker_height,
             },
@@ -271,7 +271,7 @@ class CrossroadEnv(JackalRobotEnv):
         else:
             laser_scan = np.zeros(self.num_laser_rays, dtype=np.float32)
         
-        # Goal coordinates: expose current active goal (subgoal/final goal)
+        # goal coords; current goal depends on current state of goals reached (subgoals + endgoal) 
         goal_coords = self.active_goal_position.astype(np.float32)
         
         obs = {
@@ -310,7 +310,7 @@ class CrossroadEnv(JackalRobotEnv):
             rospy.loginfo(f"Episode done: Rule violation ({reason})")
             return True
 
-        if self.current_goal_idx == 0 and not self._is_active_goal_reached(observations) and self._has_goal1_timed_out():
+        if self.current_goal_idx == 0 and not self._is_active_goal_reached(observations) and self._has_goal1_timed_out():   # timout for goal 1
             self.done_reason = "goal1_timeout"
             rospy.loginfo("Episode done: Goal 1 timeout (60s)")
             return True
@@ -373,11 +373,11 @@ class CrossroadEnv(JackalRobotEnv):
         """Check if current active goal is reached.
 
         Subgoals (stage 1/2) use rectangular hitboxes that match marker size.
-        Final goal (stage 3) uses circular threshold.
+        Final goal (stage 3) uses circle.
         """
         robot_xy = self._get_robot_xy(observations)
 
-        # Stage 1 and 2: rectangular acceptance zone
+        # Stage 1 and 2: rectangular zone
         if self.current_goal_idx in (0, 1):
             half_x = self.subgoal_marker_size_x / 2.0
             half_y = self.subgoal_marker_size_y / 2.0
@@ -385,11 +385,11 @@ class CrossroadEnv(JackalRobotEnv):
             dy = abs(float(robot_xy[1]) - float(self.active_goal_position[1]))
             return dx <= half_x and dy <= half_y
 
-        # Final stage: circular threshold
+        # Final stage: circular zone
         distance = np.linalg.norm(robot_xy - self.active_goal_position)
         return distance < self.goal_threshold
 
-    def _is_light_green(self):
+    def _is_light_green(self):  # for violation checking
         """Return True if traffic light is green according to configured states."""
         if self.traffic_light_state is None:
             return not self.treat_unknown_light_as_red
@@ -433,7 +433,7 @@ class CrossroadEnv(JackalRobotEnv):
         self.previous_distance_to_active_goal = distance
         return progress * self.progress_multiplier
 
-    def _is_waiting_at_red_light(self, observations):
+    def _is_waiting_at_red_light(self, observations):       # needs a lot of training
         """Detect waiting behavior near stop line while light is red."""
         if self.current_goal_idx != 0:
             return False
@@ -487,7 +487,7 @@ class CrossroadEnv(JackalRobotEnv):
 
     def _compute_reward(self, observations, done):
         """
-        Compute reward for current step using SRP-style helper methods.
+        Compute reward for current step.
         Args:
             observations: Current observation dict
             done: Whether episode is done
@@ -500,7 +500,7 @@ class CrossroadEnv(JackalRobotEnv):
         if done:
             return self._compute_terminal_reward()
 
-        reward = self._compute_progress_reward(observations)
+        reward = self._compute_progress_reward(observations)        # add all rewards
         reward += self._compute_waiting_reward(observations)
         reward += self._advance_goal_stage_if_reached(observations)
         reward -= self.step_penalty
@@ -622,11 +622,11 @@ class CrossroadEnv(JackalRobotEnv):
 
     def _initialize_multi_goal_path(self):
         """Create staged goals: start-side curb -> opposite curb -> final randomized goal."""
-        # Align crosswalk center with path midpoint; clamp to map bounds.
+        # align crosswalk center with path midpoint.
         midpoint_x = float((self.start_position[0] + self.goal_position[0]) / 2.0)
         self.crosswalk_center_x = float(np.clip(midpoint_x, self.map_x_min, self.map_x_max))
 
-        # Determine crossing direction from start side to final goal side.
+        # determine crossing direction from start side to final goal side.
         start_y = float(self.start_position[1])
         goal_y = float(self.goal_position[1])
         self.crossing_direction = 1.0 if goal_y >= start_y else -1.0
@@ -648,7 +648,7 @@ class CrossroadEnv(JackalRobotEnv):
         self.previous_distance_to_active_goal = None
 
     def _build_geometry_xml(self, marker_spec):
-        """Build SDF geometry XML block from marker spec."""
+        """Method for goal markers"""
         shape = marker_spec["shape"]
         if shape == "box":
             sx, sy, sz = marker_spec["size"]
@@ -660,7 +660,7 @@ class CrossroadEnv(JackalRobotEnv):
         raise ValueError(f"Unsupported marker shape: {shape}")
 
     def _build_goal_marker_sdf(self, model_name, color_rgba, marker_spec):
-        """Build SDF XML for a static goal marker model."""
+        """Method for static goal markers"""
         r, g, b, a = color_rgba
         geometry_xml = self._build_geometry_xml(marker_spec)
         return f"""<?xml version='1.0'?>
@@ -684,7 +684,7 @@ class CrossroadEnv(JackalRobotEnv):
 """
 
     def _marker_pose(self, goal_xy):
-        """Create marker pose for a 2D goal coordinate."""
+        """Method for converting 2D goal into 3D gazebo pose"""
         return Pose(
             position=Point(float(goal_xy[0]), float(goal_xy[1]), float(self.goal_marker_z)),
             orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
