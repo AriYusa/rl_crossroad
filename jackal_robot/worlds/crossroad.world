@@ -126,7 +126,7 @@
     <model name='sidewalk_left'>
       <static>1</static>
       <link name='link'>
-        <pose>0 -4.5 0.001 0 0 0</pose>
+        <pose>0 -4.5 0.01 0 0 0</pose>
         <collision name='collision'>
           <geometry>
             <box>
@@ -152,7 +152,7 @@
     <model name='sidewalk_right'>
       <static>1</static>
       <link name='link'>
-        <pose>0 4.5 0.001 0 0 0</pose>
+        <pose>0 4.5 0.01 0 0 0</pose>
         <collision name='collision'>
           <geometry>
             <box>

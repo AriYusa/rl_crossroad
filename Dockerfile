@@ -14,24 +14,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-noetic-teleop-twist-keyboard \
     python3-catkin-tools \
     python3-pip \
-    python3-tk \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir --upgrade pip==24.0
-RUN pip3 install --no-cache-dir torch==2.4.1 torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cu118
-
-# Install Python packages for RL with pinned versions
+# Install Python packages for RL
 RUN pip3 install --no-cache-dir \
     gym==0.21.0 \
-    numpy==1.24.3 \
-    rospkg==1.5.0 \
-    catkin_pkg==0.5.2 \
-    defusedxml==0.7.1 \
-    netifaces==0.11.0
-
-COPY ./jackal_crossroad_env/requirements-sac.txt /tmp/requirements-sac.txt
-RUN pip3 install --no-cache-dir -r /tmp/requirements-sac.txt
+    numpy \
+    rospkg \
+    catkin_pkg \
+    defusedxml \
+    netifaces
 
 WORKDIR /catkin_ws
 RUN mkdir -p /catkin_ws/src

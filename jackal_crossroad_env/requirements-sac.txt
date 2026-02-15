@@ -1,9 +1,0 @@
-# SAC Training Dependencies
-# Install with: pip install -r requirements-sac.txt
-stable-baselines3[extra]==1.8.0
-
-wandb==0.16.3
-
-gym==0.21.0
-
-tqdm==4.66.1
