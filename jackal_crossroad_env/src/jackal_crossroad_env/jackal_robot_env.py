@@ -51,17 +51,15 @@ class JackalRobotEnv(robot_gazebo_env.RobotGazeboEnv):
             reset_world_or_sim="WORLD"
         )
         
+        # Define publishers and subscribers
+        self._setup_publishers()
+        self._setup_subscribers()
+        
         # Initialize variables
         self.laser_scan = None
         self.odom = None
         self.traffic_light_state = None
         self.camera_image = None
-        self.green_light_states = {1}       # 1 ... green 
-        self.red_light_states = {-1}        # -1 ... red 
-
-        # Define publishers and subscribers (later to prevent crashes D:)
-        self._setup_publishers()
-        self._setup_subscribers()
         
         # CV Bridge for image conversion
         self.bridge = CvBridge()
@@ -97,20 +95,7 @@ class JackalRobotEnv(robot_gazebo_env.RobotGazeboEnv):
     
     def _traffic_light_callback(self, data):
         """Callback for traffic light state."""
-        previous_state = getattr(self, "traffic_light_state", None)
-        current_state = data.data
-        self.traffic_light_state = current_state
-
-        if previous_state is None:
-            return
-
-        green_states = getattr(self, "green_light_states", {1})
-        red_states = getattr(self, "red_light_states", {-1})
-        if previous_state in green_states and current_state in red_states:
-            rospy.loginfo(
-                "Traffic light transition detected: GREEN -> RED "      # logging for debugging
-                f"(left_state={previous_state}->{current_state})"
-            )
+        self.traffic_light_state = data.data
     
     def _camera_callback(self, data):
         """Callback for camera image."""
