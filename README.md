@@ -29,10 +29,13 @@ Install an X client (e.g., XLaunch for Windows) and run it with these settings:
 Check your IP address (172.xxx....) and run:
 
 ```bash
-docker run -it --rm --name ros_container -e DISPLAY=<your_ip>:0 ros_noetic:1
+docker run -it --rm --name ros_container \
+  -e DISPLAY=<your_ip>:0 \
+  -v "$(pwd)/jackal_crossroad_env:/catkin_ws/jackal_crossroad_env" \
+  ros_noetic:1
 ```
 
-Example: `docker run -it --rm --name ros_container -e DISPLAY=172.19.192.1:0 ros_noetic:1`
+Example: `docker run -it --rm --name ros_container -e DISPLAY=172.19.192.1:0 -v "${PWD}/jackal_crossroad_env:/catkin_ws/jackal_crossroad_env" ros_noetic:1`
 
 ### 4. Open Another Terminal with the Container
 
@@ -61,21 +64,28 @@ rostopic echo /traffic_light_left/state
 rostopic echo /traffic_light_right/state
 ```
 
-### Train with Random Agent
-
-In a new terminal (inside Docker):
-
+#### Model Training Options
 ```bash
-# First, install the environment package (one time only)
-cd /catkin_ws/jackal_crossroad_env
-pip3 install -e .
-
 # Terminal 1: Launch simulation
 roslaunch jackal_robot crossroad.launch
 
 # Terminal 2: Run training
 cd /catkin_ws/jackal_crossroad_env/scripts
-python3 train_geometric_agent.py
+
+# Use custom config file
+python3 train_sac_agent.py --config ../config/sac_config.yaml
+
+# Disable wandb logging
+python3 train_sac_agent.py --no-wandb
+
+# Use lightweight extractor (no image, faster)
+python3 train_sac_agent.py --lightweight
+
+# Set training timesteps
+python3 train_sac_agent.py --timesteps 100000
+
+# Set random seed
+python3 train_sac_agent.py --seed 123
 ```
 
 ## Robot Configuration
@@ -110,4 +120,20 @@ Continuous actions:
 
 ### Done Conditions
 
+### SAC Architecture Details
 
+The SAC implementation uses a custom multi-modal feature extractor with **MobileNetV3-Small** pretrained backbone:
+
+```
+Input:
+├── raw_image (120×160×3) ──→ MobileNetV3-Small (frozen) ──→ 256 features
+├── laser_scan (20,) ──────→ MLP ──→ 64 features
+└── robot_coords (3,) + goal_coords (2,) ──→ MLP ──→ 32 features
+
+Fusion Layer: Concatenate (352) ──→ MLP ──→ 256 combined features
+
+SAC Networks:
+├── Actor: 256 ──→ [256, 256] ──→ action mean/std
+├── Critic 1: 256 + action ──→ [256, 256] ──→ Q1
+└── Critic 2: 256 + action ──→ [256, 256] ──→ Q2
+```
