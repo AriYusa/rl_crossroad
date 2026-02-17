@@ -78,15 +78,28 @@ python3 train_sac_agent.py --config ../config/sac_config.yaml
 # Disable wandb logging
 python3 train_sac_agent.py --no-wandb
 
-# Use lightweight extractor (no image, faster)
-python3 train_sac_agent.py --lightweight
-
 # Set training timesteps
 python3 train_sac_agent.py --timesteps 100000
 
 # Set random seed
 python3 train_sac_agent.py --seed 123
+
+python3 train_sac_agent.py --record-video --device cuda
 ```
+
+#### Resume Training
+
+To resume training from a checkpoint:
+
+```bash
+# Resume from a specific checkpoint
+python3 train_sac_agent.py --resume ./sac_checkpoints/sac_jackal_250000_steps
+
+# Resume wandb logging (run ID from wandb dashboard)
+python3 train_sac_agent.py --resume ./sac_checkpoints/sac_jackal_250000_steps --wandb-run-id abc123xyz
+```
+
+**Note:** Checkpoints are saved every 25,000 steps by default in `./sac_checkpoints/`. The replay buffer is automatically loaded when resuming.
 
 ## Robot Configuration
 
@@ -119,6 +132,43 @@ Continuous actions:
 
 
 ### Done Conditions
+
+### Weights & Biases Logging
+
+The training script logs comprehensive metrics to wandb:
+
+**Episode Metrics:**
+- `episode/reward` - Total episode reward
+- `episode/length` - Episode length (steps)
+- `episode/success` - Whether goal was reached (1/0)
+- `episode/success_rate_100` - Success rate over last 100 episodes
+- `episode/avg_reward_100` - Average reward over last 100 episodes
+
+**Episode Termination Reasons:**
+- `episode/termination/collision` - Collision with obstacle
+- `episode/termination/goal_reached` - Successfully reached goal
+- `episode/termination/red_light_violation` - Crossed on red light
+- `episode/termination/off_crosswalk` - Crossed outside crosswalk
+- `episode/termination/goal1_timeout` - Timeout waiting for first subgoal
+- `episode/termination/max_steps` - Reached max episode steps
+- `episode/termination/collision_rate` - Collision rate across all episodes
+- `episode/termination/goal_reached_rate` - Success rate across all episodes
+- `episode/termination/violation_rate` - Rule violation rate
+
+**Training Metrics:**
+- `train/entropy_coefficient` - SAC entropy coefficient (auto-tuned)
+- `gradients/actor_grad_norm` - Actor network gradient norm
+- `gradients/critic_grad_norm` - Critic network gradient norm
+
+**Memory/Buffer Metrics:**
+- `memory/replay_buffer_size` - Current replay buffer size
+- `memory/replay_buffer_pos` - Current position in buffer
+- `memory/gpu_allocated_mb` - GPU memory allocated
+- `memory/gpu_reserved_mb` - GPU memory reserved
+- `memory/gpu_max_allocated_mb` - Peak GPU memory usage
+
+**Video Recordings:**
+Videos are automatically logged to wandb when `--record-video` is enabled.
 
 ### SAC Architecture Details
 

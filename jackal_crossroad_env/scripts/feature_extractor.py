@@ -6,6 +6,7 @@ Processes: image + lidar + robot_coords + goal_coords for SAC
 Supports pretrained backbones (MobileNetV3, EfficientNet) with optional freezing.
 """
 
+from pyexpat import features
 import torch
 import torch.nn as nn
 import numpy as np
@@ -116,8 +117,12 @@ class PretrainedImageEncoder(nn.Module):
         x = (x - self.mean) / self.std
         
         # Backbone features
-        features = self.backbone(x)
-        
+        if self.freeze_backbone:
+            with torch.no_grad():
+                features = self.backbone(x)
+        else:
+            features = self.backbone(x)
+            
         # Project to output dimension
         return self.projection(features)
 

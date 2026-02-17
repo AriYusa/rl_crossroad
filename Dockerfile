@@ -18,8 +18,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir --upgrade pip==24.0
-RUN pip3 install --no-cache-dir torch==2.4.1 torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cu118
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --upgrade pip==24.0
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install torch==2.4.1 torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cu118
 
 # Install Python packages for RL with pinned versions
 RUN pip3 install --no-cache-dir \
@@ -42,6 +45,7 @@ RUN cd /catkin_ws/src && \
 
 COPY ./jackal_robot /catkin_ws/src/jackal_robot
 COPY ./jackal_crossroad_env /catkin_ws/jackal_crossroad_env
+COPY .env /catkin_ws/.env
 
 RUN bash -lc "source /opt/ros/noetic/setup.bash && catkin_make"
 

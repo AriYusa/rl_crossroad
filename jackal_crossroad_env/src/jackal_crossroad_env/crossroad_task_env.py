@@ -105,6 +105,7 @@ class CrossroadEnv(JackalRobotEnv):
         # Multi-goal stage tracking
         self.stage_goals = []
         self.current_goal_idx = 0
+        self.max_goal_reached = 0  # Track maximum goal reached in episode (1, 2, or 3)
         self.active_goal_position = self.goal_position.astype(np.float32)
         self.previous_distance_to_active_goal = None
         self.crossing_direction = 1.0
@@ -317,6 +318,8 @@ class CrossroadEnv(JackalRobotEnv):
 
         if self._is_active_goal_reached(observations) and self.current_goal_idx == len(self.stage_goals) - 1:
             self.done_reason = "goal_reached"
+            # Update max goal reached to final goal (3)
+            self.max_goal_reached = max(self.max_goal_reached, self.current_goal_idx + 1)
             rospy.loginfo("Episode done: Goal reached")
             return True
 
@@ -469,6 +472,8 @@ class CrossroadEnv(JackalRobotEnv):
         if self.current_goal_idx >= len(self.stage_goals) - 1:
             return 0.0
 
+        # Update max goal reached (1-indexed: 1, 2, or 3) BEFORE incrementing
+        self.max_goal_reached = max(self.max_goal_reached, self.current_goal_idx + 1)
         self.current_goal_idx += 1
         self.active_goal_position = self.stage_goals[self.current_goal_idx].astype(np.float32)
         self.previous_distance_to_active_goal = None
@@ -644,6 +649,7 @@ class CrossroadEnv(JackalRobotEnv):
 
         self.stage_goals = [goal_start_side, goal_opposite_side, goal_final]
         self.current_goal_idx = 0
+        self.max_goal_reached = 0  # Reset max goal reached for new episode
         self.active_goal_position = self.stage_goals[self.current_goal_idx].copy()
         self.previous_distance_to_active_goal = None
 
@@ -801,6 +807,7 @@ class CrossroadEnv(JackalRobotEnv):
             'step': self.current_step,
             'goal_stage': self.current_goal_idx,
             'num_goal_stages': len(self.stage_goals),
+            'max_goal_reached': self.max_goal_reached,  # Max goal reached (1, 2, or 3)
             'done_reason': self.done_reason,
             'rule_violation': self.rule_violation,
         }

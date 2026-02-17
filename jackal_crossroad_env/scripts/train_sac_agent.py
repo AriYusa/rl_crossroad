@@ -10,8 +10,10 @@ import sys
 import argparse
 import yaml
 import time
+import json
 from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
 
 import numpy as np
 import torch
@@ -28,7 +30,6 @@ from stable_baselines3.common.callbacks import (
 )
 from stable_baselines3.common.logger import configure
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import DummyVecEnv
 
 # Weights & Biases
 import wandb
@@ -39,6 +40,7 @@ import jackal_crossroad_env  # Registers the environment
 from feature_extractor import (
     MultiModalFeatureExtractor,
 )
+from video_recorder import VideoRecorderCallback
 
 
 # ==================== Default Configuration ====================
@@ -70,9 +72,9 @@ DEFAULT_CONFIG = {
     
     # Training
     "total_timesteps": 500_000,
-    "eval_freq": 10_000,
+    "eval_freq": 1_000,
     "n_eval_episodes": 5,
-    "checkpoint_freq": 25_000,
+    "checkpoint_freq": 1_000,
     
     # Optimization
     "gradient_clip": 0.5,  # Max gradient norm
@@ -81,12 +83,19 @@ DEFAULT_CONFIG = {
     # Logging
     "use_wandb": True,
     "wandb_project": "jackal-crossroad-sac",
-    "wandb_entity": None,  # Your wandb username/team
+    "wandb_entity": "aau-uni-rl",  # Your wandb username/team
+    "wandb_run_id": None,  # Resume run ID (optional)
     "log_interval": 10,
+    
+    # Video Recording
+    "record_video": False,
+    "video_episode_freq": 100,  # Record video every N episodes
     
     # Paths
     "save_dir": "./sac_checkpoints",
     "log_dir": "./sac_logs",
+    "video_dir": "./sac_videos",
+    "resume_path": None,  # Path to checkpoint to resume from
     
     # Reproducibility
     "seed": 42,
@@ -102,11 +111,20 @@ class WandbMetricsCallback(BaseCallback):
     Custom callback for logging additional metrics to wandb.
     """
     
-    def __init__(self, verbose=0):
+    def __init__(self, verbose=0, initial_episode_count=0):
         super().__init__(verbose)
         self.episode_rewards = []
         self.episode_lengths = []
         self.episode_successes = []
+        self.episode_count = initial_episode_count
+        self.episode_terminations = {
+            'collision': 0,
+            'goal_reached': 0,
+            'red_light_violation': 0,
+            'off_crosswalk': 0,
+            'goal1_timeout': 0,
+            'max_steps': 0,
+        }
         
     def _on_step(self) -> bool:
         # Log SAC-specific metrics
@@ -124,6 +142,7 @@ class WandbMetricsCallback(BaseCallback):
         if len(self.locals.get('infos', [])) > 0:
             for info in self.locals['infos']:
                 if 'episode' in info:
+                    self.episode_count += 1
                     ep_reward = info['episode']['r']
                     ep_length = info['episode']['l']
                     self.episode_rewards.append(ep_reward)
@@ -133,12 +152,22 @@ class WandbMetricsCallback(BaseCallback):
                     success = ep_reward > 50  # Assuming goal reward > 50
                     self.episode_successes.append(success)
                     
+                    # Track termination reason
+                    done_reason = info.get('done_reason', 'unknown')
+                    if done_reason in self.episode_terminations:
+                        self.episode_terminations[done_reason] += 1
+                    
                     wandb.log({
+                        "episode/number": self.episode_count,
                         "episode/reward": ep_reward,
                         "episode/length": ep_length,
                         "episode/success": int(success),
                         "episode/success_rate_100": np.mean(self.episode_successes[-100:]) if len(self.episode_successes) > 0 else 0,
                         "episode/avg_reward_100": np.mean(self.episode_rewards[-100:]) if len(self.episode_rewards) > 0 else 0,
+                        f"episode/termination/{done_reason}": 1,
+                        "episode/termination/collision_rate": self.episode_terminations['collision'] / max(1, sum(self.episode_terminations.values())),
+                        "episode/termination/goal_reached_rate": self.episode_terminations['goal_reached'] / max(1, sum(self.episode_terminations.values())),
+                        "episode/termination/violation_rate": (self.episode_terminations['red_light_violation'] + self.episode_terminations['off_crosswalk']) / max(1, sum(self.episode_terminations.values())),
                         "train/timestep": self.num_timesteps,
                     })
         
@@ -279,7 +308,7 @@ def create_sac_model(env, config):
     return model
 
 
-def setup_callbacks(config, env):
+def setup_callbacks(config, env, initial_episode_count=0):
     """Setup training callbacks."""
     callbacks = []
     
@@ -293,6 +322,19 @@ def setup_callbacks(config, env):
     )
     callbacks.append(checkpoint_callback)
     
+    # Video recording callback
+    if config.get("record_video", False):
+        video_callback = VideoRecorderCallback(
+            video_dir=config["video_dir"],
+            record_freq=config["video_episode_freq"],
+            fps=30,
+            use_wandb=config["use_wandb"],
+            robot_topic="/front/image_raw",
+            overhead_topic="/overhead_camera/image_raw",
+            verbose=1
+        )
+        callbacks.append(video_callback)
+    
     # Wandb callbacks
     if config["use_wandb"]:
         wandb_callback = WandbCallback(
@@ -301,11 +343,29 @@ def setup_callbacks(config, env):
             verbose=2,
         )
         callbacks.append(wandb_callback)
-        callbacks.append(WandbMetricsCallback())
+        callbacks.append(WandbMetricsCallback(initial_episode_count=initial_episode_count))
         callbacks.append(MemoryProfileCallback(log_freq=1000))
         callbacks.append(GradientMonitorCallback(log_freq=100))
     
     return CallbackList(callbacks)
+
+
+def save_training_metadata(save_dir, episode_count):
+    """Save training metadata to JSON file."""
+    metadata_path = os.path.join(save_dir, "training_metadata.json")
+    metadata = {"episode_count": episode_count}
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f)
+
+
+def load_training_metadata(save_dir):
+    """Load training metadata from JSON file."""
+    metadata_path = os.path.join(save_dir, "training_metadata.json")
+    if os.path.exists(metadata_path):
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+        return metadata.get("episode_count", 0)
+    return 0
 
 
 def train_sac(config):
@@ -314,36 +374,61 @@ def train_sac(config):
     # Create directories
     Path(config["save_dir"]).mkdir(parents=True, exist_ok=True)
     Path(config["log_dir"]).mkdir(parents=True, exist_ok=True)
+    if config.get("record_video", False):
+        Path(config["video_dir"]).mkdir(parents=True, exist_ok=True)
     
-    # Initialize wandb
+    # Create environment
+    env = create_env(config)
+    
+    # Initialize or resume wandb
     if config["use_wandb"]:
-        run = wandb.init(
-            project=config["wandb_project"],
-            entity=config["wandb_entity"],
-            config=config,
-            sync_tensorboard=True,
-            monitor_gym=True,
-            save_code=True,
-            name=f"sac_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        )
+        wandb_kwargs = {
+            "project": config["wandb_project"],
+            "entity": config["wandb_entity"],
+            "config": config,
+            "sync_tensorboard": True,
+            "monitor_gym": True,
+            "save_code": True,
+        }
+        
+        # Resume or create new run
+        if config.get("wandb_run_id"):
+            wandb_kwargs["id"] = config["wandb_run_id"]
+            wandb_kwargs["resume"] = "must"
+        
+        wandb.init(**wandb_kwargs)
     
     try:
-        # Create environment
-        rospy.loginfo("Creating environment...")
-        env = create_env(config)
-        rospy.loginfo(f"Observation space: {env.observation_space}")
-        rospy.loginfo(f"Action space: {env.action_space}")
+        # Load initial episode count for resuming training
+        initial_episode_count = 0
         
-        # Create model
-        rospy.loginfo("Creating SAC model...")
-        model = create_sac_model(env, config)
+        # Create or load model
+        if config.get("resume_path") and os.path.exists(config["resume_path"] + ".zip"):
+            rospy.loginfo(f"Loading model from {config['resume_path']}...")
+            model = SAC.load(
+                config["resume_path"],
+                env=env,
+                device=config["device"],
+            )
+            # Load replay buffer if it exists
+            buffer_path = config["resume_path"].replace("sac_jackal", "sac_replay_buffer")
+            if os.path.exists(buffer_path + ".pkl"):
+                rospy.loginfo(f"Loading replay buffer from {buffer_path}...")
+                model.load_replay_buffer(buffer_path)
+            
+            # Load episode count from metadata
+            initial_episode_count = load_training_metadata(config["save_dir"])
+            rospy.loginfo(f"Model and buffer loaded successfully (episode count: {initial_episode_count})")
+        else:
+            rospy.loginfo("Creating new SAC model...")
+            model = create_sac_model(env, config)
         
         # Print model summary
         total_params = sum(p.numel() for p in model.policy.parameters())
         rospy.loginfo(f"Total model parameters: {total_params:,}")
         
         # Setup callbacks
-        callbacks = setup_callbacks(config, env)
+        callbacks = setup_callbacks(config, env, initial_episode_count=initial_episode_count)
         
         # Train
         rospy.loginfo(f"Starting training for {config['total_timesteps']} timesteps...")
@@ -359,6 +444,13 @@ def train_sac(config):
         training_time = time.time() - start_time
         rospy.loginfo(f"Training completed in {training_time/3600:.2f} hours")
         
+        # Get final episode count from callback
+        metric_callback = None
+        for callback in callbacks.callbacks:
+            if isinstance(callback, WandbMetricsCallback):
+                metric_callback = callback
+                break
+        
         # Save final model
         final_model_path = f"{config['save_dir']}/sac_jackal_final"
         model.save(final_model_path)
@@ -368,6 +460,11 @@ def train_sac(config):
         buffer_path = f"{config['save_dir']}/sac_replay_buffer_final"
         model.save_replay_buffer(buffer_path)
         rospy.loginfo(f"Replay buffer saved to {buffer_path}")
+        
+        # Save training metadata
+        if metric_callback:
+            save_training_metadata(config["save_dir"], metric_callback.episode_count)
+            rospy.loginfo(f"Training metadata saved (total episodes: {metric_callback.episode_count})")
         
     finally:
         if config["use_wandb"]:
@@ -392,12 +489,19 @@ def load_config(config_path=None):
 
 def main():
     """Main entry point."""
+    # Load environment variables from .env file
+    load_dotenv()
+    
     parser = argparse.ArgumentParser(description="Train SAC agent for Jackal Crossroad")
     parser.add_argument("--config", type=str, default=None, help="Path to config YAML file")
     parser.add_argument("--no-wandb", action="store_true", help="Disable wandb logging")
     parser.add_argument("--timesteps", type=int, default=None, help="Total training timesteps")
     parser.add_argument("--seed", type=int, default=None, help="Random seed")
     parser.add_argument("--device", type=str, default=None, help="Device (auto/cuda/cpu)")
+    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from (without .zip)")
+    parser.add_argument("--wandb-run-id", type=str, default=None, help="Wandb run ID to resume")
+    parser.add_argument("--record-video", action="store_true", help="Enable video recording")
+    parser.add_argument("--video-episode-freq", type=int, default=None, help="Record video every N episodes")
     args = parser.parse_args()
     
     # Initialize ROS node
@@ -415,6 +519,14 @@ def main():
         config["seed"] = args.seed
     if args.device:
         config["device"] = args.device
+    if args.resume:
+        config["resume_path"] = args.resume
+    if args.wandb_run_id:
+        config["wandb_run_id"] = args.wandb_run_id
+    if args.record_video:
+        config["record_video"] = True
+    if args.video_episode_freq:
+        config["video_episode_freq"] = args.video_episode_freq
     
     # Set seeds for reproducibility
     np.random.seed(config["seed"])
