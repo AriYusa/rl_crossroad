@@ -24,18 +24,19 @@ Install an X client (e.g., XLaunch for Windows) and run it with these settings:
 - Start no client
 - Disable access control
 
-### 3. Run Docker Container
+### 3. Run Docker Container with GPU Support
 
 Check your IP address (172.xxx....) and run:
 
 ```bash
 docker run -it --rm --name ros_container \
+  --gpus all \
   -e DISPLAY=<your_ip>:0 \
   -v "$(pwd)/jackal_crossroad_env:/catkin_ws/jackal_crossroad_env" \
   ros_noetic:1
 ```
 
-Example: `docker run -it --rm --name ros_container -e DISPLAY=172.19.192.1:0 -v "${PWD}/jackal_crossroad_env:/catkin_ws/jackal_crossroad_env" ros_noetic:1`
+Example: `docker run -it --rm --name ros_container --gpus all -e DISPLAY=172.19.192.1:0 -v "${PWD}/jackal_crossroad_env:/catkin_ws/jackal_crossroad_env" ros_noetic:1`
 
 ### 4. Open Another Terminal with the Container
 
@@ -84,8 +85,11 @@ python3 train_sac_agent.py --timesteps 100000
 # Set random seed
 python3 train_sac_agent.py --seed 123
 
-python3 train_sac_agent.py --record-video --device cuda
-```
+# Use GPU for training (auto-detect or specify cuda:0 for first GPU)
+python3 train_sac_agent.py --device auto
+
+python3 train_sac_agent.py --record-video --device cuda:0
+``` 
 
 #### Resume Training
 
