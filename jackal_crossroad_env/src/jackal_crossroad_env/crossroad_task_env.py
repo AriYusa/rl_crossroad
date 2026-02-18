@@ -93,13 +93,13 @@ class CrossroadEnv(JackalRobotEnv):
         
         # Episode parameters
         self.max_episode_steps = 1000
-        self.goal1_timeout_seconds = 60.0
+        self.goal_timeout_seconds = 60.0
         self.goal_distance_log_interval_seconds = 5.0
         self.current_step = 0
         self.done_reason = None
         self.rule_violation = False
         self.last_action = np.array([0.0, 0.0], dtype=np.float32)
-        self.goal1_deadline_time = None
+        self.active_goal_deadline_time = None
         self.next_goal_distance_log_time = None
 
         # Multi-goal stage tracking
@@ -212,7 +212,7 @@ class CrossroadEnv(JackalRobotEnv):
         self.rule_violation = False
         self.last_action = np.array([0.0, 0.0], dtype=np.float32)
         self.previous_distance_to_active_goal = None
-        self.goal1_deadline_time = rospy.get_time() + self.goal1_timeout_seconds
+        self._reset_goal_deadline()
         self.next_goal_distance_log_time = rospy.get_time() + self.goal_distance_log_interval_seconds
     
     def _set_action(self, action):
@@ -311,9 +311,9 @@ class CrossroadEnv(JackalRobotEnv):
             rospy.loginfo(f"Episode done: Rule violation ({reason})")
             return True
 
-        if self.current_goal_idx == 0 and not self._is_active_goal_reached(observations) and self._has_goal1_timed_out():   # timout for goal 1
-            self.done_reason = "goal1_timeout"
-            rospy.loginfo("Episode done: Goal 1 timeout (60s)")
+        if not self._is_active_goal_reached(observations) and self._has_goal_timed_out():
+            self.done_reason = "goal_timeout"
+            rospy.loginfo(f"Episode done: Goal {self.current_goal_idx + 1} timeout (60s)")
             return True
 
         if self._is_active_goal_reached(observations) and self.current_goal_idx == len(self.stage_goals) - 1:
@@ -344,11 +344,15 @@ class CrossroadEnv(JackalRobotEnv):
         robot_xy = self._get_robot_xy(observations)
         return float(np.linalg.norm(robot_xy - self.active_goal_position))
 
-    def _has_goal1_timed_out(self):
-        """Check whether the stage-1 timeout has elapsed."""
-        if self.goal1_deadline_time is None:
+    def _reset_goal_deadline(self):
+        """Reset the deadline timer for the current goal."""
+        self.active_goal_deadline_time = rospy.get_time() + self.goal_timeout_seconds
+
+    def _has_goal_timed_out(self):
+        """Check whether the current goal timeout has elapsed."""
+        if self.active_goal_deadline_time is None:
             return False
-        return rospy.get_time() >= self.goal1_deadline_time
+        return rospy.get_time() >= self.active_goal_deadline_time
 
     def _maybe_log_goal_distance(self, observations):
         """Log distance to the active goal at a fixed interval."""
@@ -477,6 +481,7 @@ class CrossroadEnv(JackalRobotEnv):
         self.current_goal_idx += 1
         self.active_goal_position = self.stage_goals[self.current_goal_idx].astype(np.float32)
         self.previous_distance_to_active_goal = None
+        self._reset_goal_deadline()  # Reset timeout for new goal
         rospy.loginfo(f"Advanced to goal stage {self.current_goal_idx + 1}/{len(self.stage_goals)}")
         return self.subgoal_reward
 

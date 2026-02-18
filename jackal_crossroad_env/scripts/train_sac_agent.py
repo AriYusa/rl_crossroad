@@ -122,7 +122,7 @@ class WandbMetricsCallback(BaseCallback):
             'goal_reached': 0,
             'red_light_violation': 0,
             'off_crosswalk': 0,
-            'goal1_timeout': 0,
+            'goal_timeout': 0,
             'max_steps': 0,
         }
         
