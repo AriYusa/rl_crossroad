@@ -11,6 +11,7 @@ import argparse
 import yaml
 import time
 import json
+import csv
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
@@ -19,6 +20,10 @@ import numpy as np
 import torch
 import rospy
 import gym
+try:
+    import matplotlib.pyplot as plt
+except Exception:
+    plt = None
 
 # Stable Baselines 3
 from stable_baselines3 import SAC
@@ -72,9 +77,13 @@ DEFAULT_CONFIG = {
     
     # Training
     "total_timesteps": 500_000,
+    "manual_training_loop": False,
     "eval_freq": 1_000,
     "n_eval_episodes": 5,
+    "eval_deterministic": True,
     "checkpoint_freq": 1_000,
+    "checkpoint_name_prefix": "sac_jackal",
+    "checkpoint_save_replay_buffer": True,
     
     # Optimization
     "gradient_clip": 0.5,  # Max gradient norm
@@ -86,6 +95,9 @@ DEFAULT_CONFIG = {
     "wandb_entity": "aau-uni-rl",  # Your wandb username/team
     "wandb_run_id": None,  # Resume run ID (optional)
     "log_interval": 10,
+    "metrics_log_freq": 500,
+    "enable_metric_visualization": True,
+    "visualization_dir": "./sac_logs/visualizations",
     
     # Video Recording
     "record_video": False,
@@ -108,14 +120,31 @@ DEFAULT_CONFIG = {
 # ==================== Custom Callbacks ====================
 class WandbMetricsCallback(BaseCallback):
     """
-    Custom callback for logging additional metrics to wandb.
+    Callback for logging rewards, losses and training metrics.
+
+    Logs to ROS console always and to wandb optionally.
     """
     
-    def __init__(self, verbose=0, initial_episode_count=0):
+    def __init__(
+        self,
+        use_wandb=True,
+        log_freq=500,
+        visualization_enabled=True,
+        visualization_dir="./sac_logs/visualizations",
+        verbose=0,
+        initial_episode_count=0,
+    ):
         super().__init__(verbose)
+        self.use_wandb = use_wandb
+        self.log_freq = log_freq
+        self.visualization_enabled = visualization_enabled
+        self.visualization_dir = Path(visualization_dir)
         self.episode_rewards = []
         self.episode_lengths = []
         self.episode_successes = []
+        self.episode_illegal_crossings = []
+        self.training_metric_history = []
+        self.episode_metric_history = []
         self.episode_count = initial_episode_count
         self.episode_terminations = {
             'collision': 0,
@@ -125,18 +154,63 @@ class WandbMetricsCallback(BaseCallback):
             'goal1_timeout': 0,
             'max_steps': 0,
         }
+    
+    def _safe_float(self, value):
+        """Convert numeric-like values to float when possible."""
+        if isinstance(value, torch.Tensor):
+            return float(value.detach().cpu().item())
+        if isinstance(value, (np.floating, np.integer)):
+            return float(value)
+        if isinstance(value, (int, float)):
+            return float(value)
+        return value
         
     def _on_step(self) -> bool:
-        # Log SAC-specific metrics
-        if hasattr(self.model, 'ent_coef') and self.model.ent_coef is not None:
-            if isinstance(self.model.ent_coef, torch.Tensor):
-                ent_coef = self.model.ent_coef.item()
-            else:
-                ent_coef = self.model.ent_coef
-            wandb.log({
-                "train/entropy_coefficient": ent_coef,
-                "train/timestep": self.num_timesteps,
-            })
+        if self.num_timesteps % self.log_freq == 0:
+            metrics = {"train/timestep": self.num_timesteps}
+            
+            # Entropy coefficient
+            if hasattr(self.model, 'ent_coef') and self.model.ent_coef is not None:
+                ent_coef = self._safe_float(self.model.ent_coef)
+                metrics["train/entropy_coefficient"] = ent_coef
+
+            # SAC losses and other values captured by SB3 logger
+            logger_values = getattr(getattr(self, "logger", None), "name_to_value", {})
+            tracked_keys = [
+                "train/actor_loss",
+                "train/critic_loss",
+                "train/ent_coef_loss",
+                "train/ent_coef",
+                "train/learning_rate",
+                "train/n_updates",
+                "rollout/ep_len_mean",
+                "rollout/ep_rew_mean",
+                "eval/mean_reward",
+                "eval/mean_ep_length",
+                "eval/success_rate",
+                "time/fps",
+            ]
+            for key in tracked_keys:
+                if key in logger_values:
+                    metrics[key] = self._safe_float(logger_values[key])
+
+            self.training_metric_history.append(dict(metrics))
+
+            if self.use_wandb and metrics:
+                wandb.log(metrics)
+
+            summary_parts = [f"t={self.num_timesteps}"]
+            if "rollout/ep_rew_mean" in metrics:
+                summary_parts.append(f"ep_rew_mean={metrics['rollout/ep_rew_mean']:.2f}")
+            if "train/actor_loss" in metrics:
+                summary_parts.append(f"actor_loss={metrics['train/actor_loss']:.4f}")
+            if "train/critic_loss" in metrics:
+                summary_parts.append(f"critic_loss={metrics['train/critic_loss']:.4f}")
+            if "train/entropy_coefficient" in metrics:
+                summary_parts.append(f"ent_coef={metrics['train/entropy_coefficient']:.4f}")
+            if "eval/mean_reward" in metrics:
+                summary_parts.append(f"eval_rew={metrics['eval/mean_reward']:.2f}")
+            rospy.loginfo("[train_metrics] " + " | ".join(summary_parts))
         
         # Check for episode completion
         if len(self.locals.get('infos', [])) > 0:
@@ -147,31 +221,194 @@ class WandbMetricsCallback(BaseCallback):
                     ep_length = info['episode']['l']
                     self.episode_rewards.append(ep_reward)
                     self.episode_lengths.append(ep_length)
-                    
-                    # Check success (goal reached)
-                    success = ep_reward > 50  # Assuming goal reward > 50
-                    self.episode_successes.append(success)
-                    
+
                     # Track termination reason
                     done_reason = info.get('done_reason', 'unknown')
                     if done_reason in self.episode_terminations:
                         self.episode_terminations[done_reason] += 1
-                    
-                    wandb.log({
+
+                    # Goal reached (explicit, not reward heuristic)
+                    goal_reached = done_reason == 'goal_reached'
+                    self.episode_successes.append(goal_reached)
+
+                    goal_reach_rate_100 = (
+                        np.mean(self.episode_successes[-100:])
+                        if len(self.episode_successes) > 0 else 0
+                    )
+                    goal_reach_rate_all = (
+                        self.episode_terminations['goal_reached']
+                        / max(1, sum(self.episode_terminations.values()))
+                    )
+                    illegal_crossing = done_reason in ('red_light_violation', 'off_crosswalk')
+                    self.episode_illegal_crossings.append(illegal_crossing)
+                    illegal_crossing_rate_100 = (
+                        np.mean(self.episode_illegal_crossings[-100:])
+                        if len(self.episode_illegal_crossings) > 0 else 0
+                    )
+                    illegal_crossing_rate_all = (
+                        (self.episode_terminations['red_light_violation'] + self.episode_terminations['off_crosswalk'])
+                        / max(1, sum(self.episode_terminations.values()))
+                    )
+
+                    episode_metrics = {
                         "episode/number": self.episode_count,
                         "episode/reward": ep_reward,
                         "episode/length": ep_length,
-                        "episode/success": int(success),
-                        "episode/success_rate_100": np.mean(self.episode_successes[-100:]) if len(self.episode_successes) > 0 else 0,
+                        "episode/success": int(goal_reached),
+                        "episode/success_rate_100": goal_reach_rate_100,
+                        "episode/goal_reached": int(goal_reached),
+                        "episode/goal_reach_rate_100": goal_reach_rate_100,
+                        "episode/goal_reach_rate_all": goal_reach_rate_all,
+                        "episode/illegal_crossing": int(illegal_crossing),
+                        "episode/illegal_crossing_rate_100": illegal_crossing_rate_100,
+                        "episode/illegal_crossing_rate_all": illegal_crossing_rate_all,
                         "episode/avg_reward_100": np.mean(self.episode_rewards[-100:]) if len(self.episode_rewards) > 0 else 0,
                         f"episode/termination/{done_reason}": 1,
                         "episode/termination/collision_rate": self.episode_terminations['collision'] / max(1, sum(self.episode_terminations.values())),
-                        "episode/termination/goal_reached_rate": self.episode_terminations['goal_reached'] / max(1, sum(self.episode_terminations.values())),
-                        "episode/termination/violation_rate": (self.episode_terminations['red_light_violation'] + self.episode_terminations['off_crosswalk']) / max(1, sum(self.episode_terminations.values())),
+                        "episode/termination/goal_reached_rate": goal_reach_rate_all,
+                        "episode/termination/violation_rate": illegal_crossing_rate_all,
                         "train/timestep": self.num_timesteps,
-                    })
+                    }
+
+                    if "episode_path_length" in info:
+                        episode_metrics["episode/path_length"] = self._safe_float(info.get("episode_path_length"))
+                    if "optimal_path_length" in info:
+                        episode_metrics["episode/optimal_path_length"] = self._safe_float(info.get("optimal_path_length"))
+                    if "path_efficiency" in info:
+                        episode_metrics["episode/path_efficiency"] = self._safe_float(info.get("path_efficiency"))
+
+                    self.episode_metric_history.append(dict(episode_metrics))
+
+                    if self.use_wandb:
+                        wandb.log(episode_metrics)
+
+                    rospy.loginfo(
+                        "[episode] #{} | reward={:.2f} | length={} | goal_reached={} | goal_reach_rate_100={:.2f} | illegal_crossing_rate_100={:.2f} | path_eff={:.3f} | done_reason={}".format(
+                            self.episode_count,
+                            ep_reward,
+                            ep_length,
+                            int(goal_reached),
+                            goal_reach_rate_100,
+                            illegal_crossing_rate_100,
+                            float(episode_metrics.get("episode/path_efficiency", 0.0)),
+                            done_reason,
+                        )
+                    )
         
         return True
+
+    def _on_training_end(self) -> None:
+        if not self.visualization_enabled:
+            return
+        self.visualization_dir.mkdir(parents=True, exist_ok=True)
+        self._save_csv(self.visualization_dir / "training_metrics.csv", self.training_metric_history)
+        self._save_csv(self.visualization_dir / "episode_metrics.csv", self.episode_metric_history)
+        self._save_summary_table()
+        self._save_plots()
+
+    def _save_csv(self, file_path, rows):
+        if not rows:
+            return
+        all_keys = set()
+        for row in rows:
+            all_keys.update(row.keys())
+        fieldnames = sorted(all_keys)
+        with open(file_path, "w", newline="", encoding="utf-8") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(row)
+
+    def _save_summary_table(self):
+        total_episodes = len(self.episode_metric_history)
+        final_goal_reach_100 = float(np.mean(self.episode_successes[-100:])) if self.episode_successes else 0.0
+        final_illegal_100 = float(np.mean(self.episode_illegal_crossings[-100:])) if self.episode_illegal_crossings else 0.0
+        avg_reward_100 = float(np.mean(self.episode_rewards[-100:])) if self.episode_rewards else 0.0
+
+        actor_loss = None
+        critic_loss = None
+        for row in reversed(self.training_metric_history):
+            if actor_loss is None and "train/actor_loss" in row:
+                actor_loss = row["train/actor_loss"]
+            if critic_loss is None and "train/critic_loss" in row:
+                critic_loss = row["train/critic_loss"]
+            if actor_loss is not None and critic_loss is not None:
+                break
+
+        summary_rows = [
+            ("total_episodes", total_episodes),
+            ("avg_reward_100", round(avg_reward_100, 4)),
+            ("goal_reach_rate_100", round(final_goal_reach_100, 4)),
+            ("illegal_crossing_rate_100", round(final_illegal_100, 4)),
+            ("latest_actor_loss", "n/a" if actor_loss is None else round(float(actor_loss), 6)),
+            ("latest_critic_loss", "n/a" if critic_loss is None else round(float(critic_loss), 6)),
+        ]
+
+        csv_path = self.visualization_dir / "metrics_summary_table.csv"
+        with open(csv_path, "w", newline="", encoding="utf-8") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(["metric", "value"])
+            for key, value in summary_rows:
+                writer.writerow([key, value])
+
+        md_path = self.visualization_dir / "metrics_summary_table.md"
+        with open(md_path, "w", encoding="utf-8") as mdfile:
+            mdfile.write("| metric | value |\n")
+            mdfile.write("|---|---|\n")
+            for key, value in summary_rows:
+                mdfile.write(f"| {key} | {value} |\n")
+
+    def _save_plots(self):
+        if plt is None:
+            rospy.logwarn("Metric visualization skipped: matplotlib not available")
+            return
+
+        if self.episode_metric_history:
+            timesteps = [row.get("train/timestep", idx) for idx, row in enumerate(self.episode_metric_history, start=1)]
+            rewards = [row.get("episode/reward", 0.0) for row in self.episode_metric_history]
+            goal_rate_100 = [row.get("episode/goal_reach_rate_100", 0.0) for row in self.episode_metric_history]
+            illegal_rate_100 = [row.get("episode/illegal_crossing_rate_100", 0.0) for row in self.episode_metric_history]
+
+            plt.figure(figsize=(10, 5))
+            plt.plot(timesteps, rewards, label="episode_reward", alpha=0.7)
+            plt.xlabel("timestep")
+            plt.ylabel("reward")
+            plt.title("Episode Reward over Time")
+            plt.grid(True, alpha=0.3)
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(self.visualization_dir / "episode_reward_curve.png", dpi=150)
+            plt.close()
+
+            plt.figure(figsize=(10, 5))
+            plt.plot(timesteps, goal_rate_100, label="goal_reach_rate_100")
+            plt.plot(timesteps, illegal_rate_100, label="illegal_crossing_rate_100")
+            plt.xlabel("timestep")
+            plt.ylabel("rate")
+            plt.title("Safety and Success Rates (100-episode window)")
+            plt.ylim(0.0, 1.0)
+            plt.grid(True, alpha=0.3)
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(self.visualization_dir / "episode_rate_curves.png", dpi=150)
+            plt.close()
+
+        if self.training_metric_history:
+            train_steps = [row.get("train/timestep", idx) for idx, row in enumerate(self.training_metric_history, start=1)]
+            actor_loss = [row.get("train/actor_loss", np.nan) for row in self.training_metric_history]
+            critic_loss = [row.get("train/critic_loss", np.nan) for row in self.training_metric_history]
+
+            plt.figure(figsize=(10, 5))
+            plt.plot(train_steps, actor_loss, label="actor_loss")
+            plt.plot(train_steps, critic_loss, label="critic_loss")
+            plt.xlabel("timestep")
+            plt.ylabel("loss")
+            plt.title("SAC Loss Curves")
+            plt.grid(True, alpha=0.3)
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(self.visualization_dir / "loss_curves.png", dpi=150)
+            plt.close()
 
 
 class MemoryProfileCallback(BaseCallback):
@@ -311,14 +548,35 @@ def create_sac_model(env, config):
 def setup_callbacks(config, env, initial_episode_count=0):
     """Setup training callbacks."""
     callbacks = []
+
+    # Periodic evaluation callback
+    if config.get("eval_freq", 0) and config["eval_freq"] > 0:
+        eval_save_dir = os.path.join(config["save_dir"], "best_model")
+        eval_log_dir = os.path.join(config["log_dir"], "eval")
+        Path(eval_save_dir).mkdir(parents=True, exist_ok=True)
+        Path(eval_log_dir).mkdir(parents=True, exist_ok=True)
+
+        eval_env = create_env(config)
+        eval_callback = EvalCallback(
+            eval_env=eval_env,
+            best_model_save_path=eval_save_dir,
+            log_path=eval_log_dir,
+            eval_freq=config["eval_freq"],
+            n_eval_episodes=config["n_eval_episodes"],
+            deterministic=config.get("eval_deterministic", True),
+            render=False,
+            verbose=1,
+        )
+        callbacks.append(eval_callback)
     
     # Checkpoint callback
     checkpoint_callback = CheckpointCallback(
         save_freq=config["checkpoint_freq"],
         save_path=config["save_dir"],
-        name_prefix="sac_jackal",
-        save_replay_buffer=True,
+        name_prefix=config.get("checkpoint_name_prefix", "sac_jackal"),
+        save_replay_buffer=config.get("checkpoint_save_replay_buffer", True),
         save_vecnormalize=True,
+        verbose=1,
     )
     callbacks.append(checkpoint_callback)
     
@@ -335,7 +593,18 @@ def setup_callbacks(config, env, initial_episode_count=0):
         )
         callbacks.append(video_callback)
     
-    # Wandb callbacks
+    # Reward/Loss/Metrics callback (console always, wandb optional)
+    callbacks.append(
+        WandbMetricsCallback(
+            use_wandb=config["use_wandb"],
+            log_freq=config.get("metrics_log_freq", 500),
+            visualization_enabled=config.get("enable_metric_visualization", True),
+            visualization_dir=config.get("visualization_dir", "./sac_logs/visualizations"),
+            initial_episode_count=initial_episode_count,
+        )
+    )
+
+    # Wandb-specific callbacks
     if config["use_wandb"]:
         wandb_callback = WandbCallback(
             gradient_save_freq=1000,
@@ -343,7 +612,6 @@ def setup_callbacks(config, env, initial_episode_count=0):
             verbose=2,
         )
         callbacks.append(wandb_callback)
-        callbacks.append(WandbMetricsCallback(initial_episode_count=initial_episode_count))
         callbacks.append(MemoryProfileCallback(log_freq=1000))
         callbacks.append(GradientMonitorCallback(log_freq=100))
     
@@ -429,17 +697,34 @@ def train_sac(config):
         
         # Setup callbacks
         callbacks = setup_callbacks(config, env, initial_episode_count=initial_episode_count)
+
+        rospy.loginfo(
+            "Checkpointing enabled: every {} steps -> {} (prefix: {})".format(
+                config["checkpoint_freq"],
+                config["save_dir"],
+                config.get("checkpoint_name_prefix", "sac_jackal"),
+            )
+        )
         
         # Train
         rospy.loginfo(f"Starting training for {config['total_timesteps']} timesteps...")
         start_time = time.time()
-        
-        model.learn(
-            total_timesteps=config["total_timesteps"],
-            callback=callbacks,
-            log_interval=config["log_interval"],
-            progress_bar=True,
-        )
+
+        if config.get("manual_training_loop", False):
+            rospy.loginfo("Using manual training loop (episode collection + batch updates).")
+            train_sac_manual_loop(
+                model=model,
+                total_timesteps=config["total_timesteps"],
+                callback=callbacks,
+                log_interval=config["log_interval"],
+            )
+        else:
+            model.learn(
+                total_timesteps=config["total_timesteps"],
+                callback=callbacks,
+                log_interval=config["log_interval"],
+                progress_bar=True,
+            )
         
         training_time = time.time() - start_time
         rospy.loginfo(f"Training completed in {training_time/3600:.2f} hours")
@@ -469,8 +754,56 @@ def train_sac(config):
     finally:
         if config["use_wandb"]:
             wandb.finish()
+        if 'callbacks' in locals():
+            for callback in callbacks.callbacks:
+                if isinstance(callback, EvalCallback) and getattr(callback, "eval_env", None) is not None:
+                    callback.eval_env.close()
         env.close()
     
+    return model
+
+
+def train_sac_manual_loop(model, total_timesteps, callback=None, log_interval=10):
+    """
+    Manual SAC training loop with explicit rollout collection and batch updates.
+
+    This mirrors the OffPolicyAlgorithm learn flow but keeps control visible:
+    1) collect environment interactions/episodes
+    2) update policy and critics using replay-buffer mini-batches
+    """
+    total_timesteps, callback = model._setup_learn(
+        total_timesteps=total_timesteps,
+        callback=callback,
+        reset_num_timesteps=True,
+        tb_log_name="SAC",
+        progress_bar=True,
+    )
+
+    callback.on_training_start(locals(), globals())
+
+    while model.num_timesteps < total_timesteps:
+        rollout = model.collect_rollouts(
+            env=model.env,
+            train_freq=model.train_freq,
+            action_noise=model.action_noise,
+            callback=callback,
+            learning_starts=model.learning_starts,
+            replay_buffer=model.replay_buffer,
+            log_interval=log_interval,
+        )
+
+        if not rollout.continue_training:
+            break
+
+        if model.num_timesteps > model.learning_starts:
+            gradient_steps = model.gradient_steps
+            if gradient_steps < 0:
+                gradient_steps = rollout.episode_timesteps
+
+            if gradient_steps > 0:
+                model.train(batch_size=model.batch_size, gradient_steps=gradient_steps)
+
+    callback.on_training_end()
     return model
 
 
@@ -502,6 +835,16 @@ def main():
     parser.add_argument("--wandb-run-id", type=str, default=None, help="Wandb run ID to resume")
     parser.add_argument("--record-video", action="store_true", help="Enable video recording")
     parser.add_argument("--video-episode-freq", type=int, default=None, help="Record video every N episodes")
+    parser.add_argument("--metrics-log-freq", type=int, default=None, help="Log rewards/losses/metrics every N timesteps")
+    parser.add_argument("--eval-freq", type=int, default=None, help="Run evaluation every N timesteps (0 to disable)")
+    parser.add_argument("--n-eval-episodes", type=int, default=None, help="Number of episodes per evaluation run")
+    parser.add_argument("--stochastic-eval", action="store_true", help="Use stochastic actions during evaluation")
+    parser.add_argument("--checkpoint-freq", type=int, default=None, help="Save model checkpoint every N timesteps")
+    parser.add_argument("--checkpoint-prefix", type=str, default=None, help="Filename prefix for interval checkpoints")
+    parser.add_argument("--no-checkpoint-replay-buffer", action="store_true", help="Do not save replay buffer for interval checkpoints")
+    parser.add_argument("--no-metric-visualization", action="store_true", help="Disable local metric visualizations (plots/tables/csv)")
+    parser.add_argument("--visualization-dir", type=str, default=None, help="Directory for metric plots and tables")
+    parser.add_argument("--manual-loop", action="store_true", help="Use manual loop with explicit episode collection and batch updates")
     args = parser.parse_args()
     
     # Initialize ROS node
@@ -527,6 +870,26 @@ def main():
         config["record_video"] = True
     if args.video_episode_freq:
         config["video_episode_freq"] = args.video_episode_freq
+    if args.metrics_log_freq:
+        config["metrics_log_freq"] = args.metrics_log_freq
+    if args.eval_freq is not None:
+        config["eval_freq"] = args.eval_freq
+    if args.n_eval_episodes:
+        config["n_eval_episodes"] = args.n_eval_episodes
+    if args.stochastic_eval:
+        config["eval_deterministic"] = False
+    if args.checkpoint_freq is not None:
+        config["checkpoint_freq"] = args.checkpoint_freq
+    if args.checkpoint_prefix:
+        config["checkpoint_name_prefix"] = args.checkpoint_prefix
+    if args.no_checkpoint_replay_buffer:
+        config["checkpoint_save_replay_buffer"] = False
+    if args.no_metric_visualization:
+        config["enable_metric_visualization"] = False
+    if args.visualization_dir:
+        config["visualization_dir"] = args.visualization_dir
+    if args.manual_loop:
+        config["manual_training_loop"] = True
     
     # Set seeds for reproducibility
     np.random.seed(config["seed"])
