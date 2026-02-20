@@ -55,8 +55,8 @@ DEFAULT_CONFIG = {
     
     # SAC Hyperparameters
     "learning_rate": 3e-4,
-    "buffer_size": 10_000,
-    "learning_starts": 1000,
+    "buffer_size": 50_000,
+    "learning_starts": 2_000,
     "batch_size": 256,
     "tau": 0.005,  # Soft update coefficient
     "gamma": 0.99,  # Discount factor
@@ -82,7 +82,8 @@ DEFAULT_CONFIG = {
     "n_eval_episodes": 5,
     "eval_deterministic": True,
     "checkpoint_freq": 1_000,
-    "checkpoint_name_prefix": "sac_jackal",
+    "checkpoint_name_prefix": "sac_jackal_newGen",
+    "replay_buffer_name_prefix": "sac_replay_buffer_newGen",
     "checkpoint_save_replay_buffer": True,
     
     # Optimization
@@ -151,7 +152,7 @@ class WandbMetricsCallback(BaseCallback):
             'goal_reached': 0,
             'red_light_violation': 0,
             'off_crosswalk': 0,
-            'goal1_timeout': 0,
+            'goal_timeout': 0,
             'max_steps': 0,
         }
     
@@ -483,6 +484,53 @@ class GradientMonitorCallback(BaseCallback):
         return total_norm if total_norm > 0 else None
 
 
+class WandbCheckpointCallback(CheckpointCallback):
+    """
+    Extended checkpoint callback that also uploads checkpoints to wandb.
+    """
+    
+    def __init__(self, save_freq, save_path, name_prefix="rl_model",
+                 save_replay_buffer=True, save_vecnormalize=True,
+                 use_wandb=True, verbose=0):
+        super().__init__(
+            save_freq=save_freq,
+            save_path=save_path,
+            name_prefix=name_prefix,
+            save_replay_buffer=save_replay_buffer,
+            save_vecnormalize=save_vecnormalize,
+            verbose=verbose
+        )
+        self.use_wandb = use_wandb
+    
+    def _on_step(self) -> bool:
+        # Call parent to save checkpoint locally
+        result = super()._on_step()
+        
+        # Upload to wandb if checkpoint was just saved
+        if self.use_wandb and self.n_calls % self.save_freq == 0:
+            # Upload model checkpoint
+            checkpoint_path = os.path.join(
+                self.save_path,
+                f"{self.name_prefix}_{self.num_timesteps}_steps.zip"
+            )
+            if os.path.exists(checkpoint_path):
+                rospy.loginfo(f"Uploading checkpoint to wandb: {checkpoint_path}")
+                wandb.save(checkpoint_path, base_path=self.save_path, policy="now")
+            
+            # Upload replay buffer if it exists
+            if self.save_replay_buffer:
+                replay_buffer_prefix = self.name_prefix.replace("sac_jackal", "sac_replay_buffer")
+                buffer_path = os.path.join(
+                    self.save_path,
+                    f"{replay_buffer_prefix}_{self.num_timesteps}_steps.pkl"
+                )
+                if os.path.exists(buffer_path):
+                    rospy.loginfo(f"Uploading replay buffer to wandb: {buffer_path}")
+                    wandb.save(buffer_path, base_path=self.save_path, policy="now")
+        
+        return result
+
+
 # ==================== SAC Training Functions ====================
 def create_env(config):
     """Create and wrap the environment."""
@@ -569,13 +617,14 @@ def setup_callbacks(config, env, initial_episode_count=0):
         )
         callbacks.append(eval_callback)
     
-    # Checkpoint callback
-    checkpoint_callback = CheckpointCallback(
+    # Checkpoint callback (with wandb upload if enabled)
+    checkpoint_callback = WandbCheckpointCallback(
         save_freq=config["checkpoint_freq"],
         save_path=config["save_dir"],
-        name_prefix=config.get("checkpoint_name_prefix", "sac_jackal"),
+        name_prefix=config.get("checkpoint_name_prefix", "sac_jackal_newGen"),
         save_replay_buffer=config.get("checkpoint_save_replay_buffer", True),
         save_vecnormalize=True,
+        use_wandb=config["use_wandb"],
         verbose=1,
     )
     callbacks.append(checkpoint_callback)
@@ -669,27 +718,46 @@ def train_sac(config):
     try:
         # Load initial episode count for resuming training
         initial_episode_count = 0
+        is_resuming = False
+        resume_path = config.get("resume_path")
         
         # Create or load model
-        if config.get("resume_path") and os.path.exists(config["resume_path"] + ".zip"):
-            rospy.loginfo(f"Loading model from {config['resume_path']}...")
+        if resume_path:
+            checkpoint_zip = resume_path + ".zip"
+            if not os.path.exists(checkpoint_zip):
+                raise FileNotFoundError(
+                    f"Resume checkpoint not found: {checkpoint_zip}. "
+                    "Use --resume with path without .zip suffix."
+                )
+
+            rospy.loginfo(f"Loading model from {resume_path}...")
             model = SAC.load(
-                config["resume_path"],
+                resume_path,
                 env=env,
                 device=config["device"],
             )
+            is_resuming = True
             # Load replay buffer if it exists
-            buffer_path = config["resume_path"].replace("sac_jackal", "sac_replay_buffer")
+            buffer_path = resume_path.replace("sac_jackal", "sac_replay_buffer")
             if os.path.exists(buffer_path + ".pkl"):
                 rospy.loginfo(f"Loading replay buffer from {buffer_path}...")
                 model.load_replay_buffer(buffer_path)
+            else:
+                rospy.logwarn(f"Replay buffer not found at {buffer_path}.pkl (continuing without it)")
             
             # Load episode count from metadata
             initial_episode_count = load_training_metadata(config["save_dir"])
-            rospy.loginfo(f"Model and buffer loaded successfully (episode count: {initial_episode_count})")
+            rospy.loginfo(
+                f"Model loaded successfully (model timesteps: {model.num_timesteps}, "
+                f"episode count: {initial_episode_count})"
+            )
         else:
             rospy.loginfo("Creating new SAC model...")
             model = create_sac_model(env, config)
+        
+        # Log actual device being used by the model
+        rospy.loginfo(f"Model device: {model.device}")
+        rospy.loginfo(f"Policy network device: {model.policy.device if hasattr(model.policy, 'device') else 'N/A'}")
         
         # Print model summary
         total_params = sum(p.numel() for p in model.policy.parameters())
@@ -717,6 +785,7 @@ def train_sac(config):
                 total_timesteps=config["total_timesteps"],
                 callback=callbacks,
                 log_interval=config["log_interval"],
+                reset_num_timesteps=not is_resuming,
             )
         else:
             model.learn(
@@ -724,8 +793,9 @@ def train_sac(config):
                 callback=callbacks,
                 log_interval=config["log_interval"],
                 progress_bar=True,
+                reset_num_timesteps=not is_resuming,
             )
-        
+
         training_time = time.time() - start_time
         rospy.loginfo(f"Training completed in {training_time/3600:.2f} hours")
         
@@ -737,14 +807,24 @@ def train_sac(config):
                 break
         
         # Save final model
-        final_model_path = f"{config['save_dir']}/sac_jackal_final"
+        final_model_path = f"{config['save_dir']}/{config['checkpoint_name_prefix']}_final"
         model.save(final_model_path)
         rospy.loginfo(f"Final model saved to {final_model_path}")
         
+        # Upload final model to wandb
+        if config["use_wandb"]:
+            rospy.loginfo("Uploading final model to wandb...")
+            wandb.save(f"{final_model_path}.zip", base_path=config["save_dir"], policy="now")
+        
         # Save replay buffer
-        buffer_path = f"{config['save_dir']}/sac_replay_buffer_final"
+        buffer_path = f"{config['save_dir']}/{config['replay_buffer_name_prefix']}_final"
         model.save_replay_buffer(buffer_path)
         rospy.loginfo(f"Replay buffer saved to {buffer_path}")
+        
+        # Upload final replay buffer to wandb
+        if config["use_wandb"]:
+            rospy.loginfo("Uploading final replay buffer to wandb...")
+            wandb.save(f"{buffer_path}.pkl", base_path=config["save_dir"], policy="now")
         
         # Save training metadata
         if metric_callback:
@@ -763,7 +843,7 @@ def train_sac(config):
     return model
 
 
-def train_sac_manual_loop(model, total_timesteps, callback=None, log_interval=10):
+def train_sac_manual_loop(model, total_timesteps, callback=None, log_interval=10, reset_num_timesteps=True):
     """
     Manual SAC training loop with explicit rollout collection and batch updates.
 
@@ -774,7 +854,7 @@ def train_sac_manual_loop(model, total_timesteps, callback=None, log_interval=10
     total_timesteps, callback = model._setup_learn(
         total_timesteps=total_timesteps,
         callback=callback,
-        reset_num_timesteps=True,
+        reset_num_timesteps=reset_num_timesteps,
         tb_log_name="SAC",
         progress_bar=True,
     )
@@ -896,6 +976,20 @@ def main():
     torch.manual_seed(config["seed"])
     if torch.cuda.is_available():
         torch.cuda.manual_seed(config["seed"])
+    
+    # Log device information
+    rospy.loginfo("=" * 60)
+    rospy.loginfo("Device Information")
+    rospy.loginfo("=" * 60)
+    rospy.loginfo(f"PyTorch version: {torch.__version__}")
+    rospy.loginfo(f"CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        rospy.loginfo(f"CUDA version: {torch.version.cuda}")
+        rospy.loginfo(f"Number of GPUs: {torch.cuda.device_count()}")
+        for i in range(torch.cuda.device_count()):
+            rospy.loginfo(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
+    rospy.loginfo(f"Requested device: {config['device']}")
+    rospy.loginfo("=" * 60)
     
     rospy.loginfo("=" * 60)
     rospy.loginfo("SAC Training Configuration")
