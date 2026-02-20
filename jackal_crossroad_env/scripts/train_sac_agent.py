@@ -165,6 +165,16 @@ class WandbMetricsCallback(BaseCallback):
         if isinstance(value, (int, float)):
             return float(value)
         return value
+
+    def _format_metric(self, value, precision=4):
+        """Format metric values safely for console output."""
+        value = self._safe_float(value)
+        if isinstance(value, (np.floating, np.integer, int, float)):
+            return f"{float(value):.{precision}f}"
+        try:
+            return f"{float(value):.{precision}f}"
+        except (TypeError, ValueError):
+            return str(value)
         
     def _on_step(self) -> bool:
         if self.num_timesteps % self.log_freq == 0:
@@ -202,15 +212,25 @@ class WandbMetricsCallback(BaseCallback):
 
             summary_parts = [f"t={self.num_timesteps}"]
             if "rollout/ep_rew_mean" in metrics:
-                summary_parts.append(f"ep_rew_mean={metrics['rollout/ep_rew_mean']:.2f}")
+                summary_parts.append(
+                    f"ep_rew_mean={self._format_metric(metrics['rollout/ep_rew_mean'], precision=2)}"
+                )
             if "train/actor_loss" in metrics:
-                summary_parts.append(f"actor_loss={metrics['train/actor_loss']:.4f}")
+                summary_parts.append(
+                    f"actor_loss={self._format_metric(metrics['train/actor_loss'], precision=4)}"
+                )
             if "train/critic_loss" in metrics:
-                summary_parts.append(f"critic_loss={metrics['train/critic_loss']:.4f}")
+                summary_parts.append(
+                    f"critic_loss={self._format_metric(metrics['train/critic_loss'], precision=4)}"
+                )
             if "train/entropy_coefficient" in metrics:
-                summary_parts.append(f"ent_coef={metrics['train/entropy_coefficient']:.4f}")
+                summary_parts.append(
+                    f"ent_coef={self._format_metric(metrics['train/entropy_coefficient'], precision=4)}"
+                )
             if "eval/mean_reward" in metrics:
-                summary_parts.append(f"eval_rew={metrics['eval/mean_reward']:.2f}")
+                summary_parts.append(
+                    f"eval_rew={self._format_metric(metrics['eval/mean_reward'], precision=2)}"
+                )
             rospy.loginfo("[train_metrics] " + " | ".join(summary_parts))
         
         # Check for episode completion

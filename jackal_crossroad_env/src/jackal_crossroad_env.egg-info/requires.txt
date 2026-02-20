@@ -1,4 +1,0 @@
-gym
-matplotlib
-numpy
-rospkg
