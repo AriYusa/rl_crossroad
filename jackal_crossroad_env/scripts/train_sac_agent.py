@@ -75,6 +75,8 @@ DEFAULT_CONFIG = {
     "eval_freq": 1_000,
     "n_eval_episodes": 5,
     "checkpoint_freq": 1_000,
+    "checkpoint_name_prefix": "sac_jackal_newGen",
+    "replay_buffer_name_prefix": "sac_replay_buffer_newGen",
     
     # Optimization
     "gradient_clip": 0.5,  # Max gradient norm
@@ -363,7 +365,7 @@ def setup_callbacks(config, env, initial_episode_count=0):
     checkpoint_callback = WandbCheckpointCallback(
         save_freq=config["checkpoint_freq"],
         save_path=config["save_dir"],
-        name_prefix="sac_jackal",
+        name_prefix=config["checkpoint_name_prefix"],
         save_replay_buffer=True,
         save_vecnormalize=True,
         use_wandb=config["use_wandb"],
@@ -449,24 +451,39 @@ def train_sac(config):
     try:
         # Load initial episode count for resuming training
         initial_episode_count = 0
+        is_resuming = False
+        resume_path = config.get("resume_path")
         
         # Create or load model
-        if config.get("resume_path") and os.path.exists(config["resume_path"] + ".zip"):
-            rospy.loginfo(f"Loading model from {config['resume_path']}...")
+        if resume_path:
+            checkpoint_zip = resume_path + ".zip"
+            if not os.path.exists(checkpoint_zip):
+                raise FileNotFoundError(
+                    f"Resume checkpoint not found: {checkpoint_zip}. "
+                    "Use --resume with path without .zip suffix."
+                )
+
+            rospy.loginfo(f"Loading model from {resume_path}...")
             model = SAC.load(
-                config["resume_path"],
+                resume_path,
                 env=env,
                 device=config["device"],
             )
+            is_resuming = True
             # Load replay buffer if it exists
-            buffer_path = config["resume_path"].replace("sac_jackal", "sac_replay_buffer")
+            buffer_path = resume_path.replace("sac_jackal", "sac_replay_buffer")
             if os.path.exists(buffer_path + ".pkl"):
                 rospy.loginfo(f"Loading replay buffer from {buffer_path}...")
                 model.load_replay_buffer(buffer_path)
+            else:
+                rospy.logwarn(f"Replay buffer not found at {buffer_path}.pkl (continuing without it)")
             
             # Load episode count from metadata
             initial_episode_count = load_training_metadata(config["save_dir"])
-            rospy.loginfo(f"Model and buffer loaded successfully (episode count: {initial_episode_count})")
+            rospy.loginfo(
+                f"Model loaded successfully (model timesteps: {model.num_timesteps}, "
+                f"episode count: {initial_episode_count})"
+            )
         else:
             rospy.loginfo("Creating new SAC model...")
             model = create_sac_model(env, config)
@@ -491,6 +508,7 @@ def train_sac(config):
             callback=callbacks,
             log_interval=config["log_interval"],
             progress_bar=True,
+            reset_num_timesteps=not is_resuming,
         )
         
         training_time = time.time() - start_time
@@ -504,7 +522,7 @@ def train_sac(config):
                 break
         
         # Save final model
-        final_model_path = f"{config['save_dir']}/sac_jackal_final"
+        final_model_path = f"{config['save_dir']}/{config['checkpoint_name_prefix']}_final"
         model.save(final_model_path)
         rospy.loginfo(f"Final model saved to {final_model_path}")
         
@@ -514,7 +532,7 @@ def train_sac(config):
             wandb.save(f"{final_model_path}.zip", base_path=config["save_dir"], policy="now")
         
         # Save replay buffer
-        buffer_path = f"{config['save_dir']}/sac_replay_buffer_final"
+        buffer_path = f"{config['save_dir']}/{config['replay_buffer_name_prefix']}_final"
         model.save_replay_buffer(buffer_path)
         rospy.loginfo(f"Replay buffer saved to {buffer_path}")
         
