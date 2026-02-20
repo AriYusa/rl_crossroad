@@ -45,7 +45,7 @@ RUN cd /catkin_ws/src && \
 
 COPY ./jackal_robot /catkin_ws/src/jackal_robot
 COPY ./jackal_crossroad_env /catkin_ws/jackal_crossroad_env
-COPY .env /catkin_ws/.env
+# COPY .env /catkin_ws/.env
 
 RUN bash -lc "source /opt/ros/noetic/setup.bash && catkin_make"
 

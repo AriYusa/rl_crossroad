@@ -109,6 +109,11 @@ class CrossroadEnv(JackalRobotEnv):
         self.active_goal_position = self.goal_position.astype(np.float32)
         self.previous_distance_to_active_goal = None
         self.crossing_direction = 1.0
+        self.episode_path_length = 0.0
+        self.previous_robot_xy = None
+        self.episode_optimal_path_length = 0.0
+        self.optimal_path_rect_samples_x = 21
+        self.optimal_path_rect_samples_y = 11
 
         # Visualization for goals in Gazebo
         self.goal_marker_names = [
@@ -214,6 +219,75 @@ class CrossroadEnv(JackalRobotEnv):
         self.previous_distance_to_active_goal = None
         self._reset_goal_deadline()
         self.next_goal_distance_log_time = rospy.get_time() + self.goal_distance_log_interval_seconds
+        self.episode_path_length = 0.0
+        self.previous_robot_xy = None
+        self.episode_optimal_path_length = 0.0
+
+    def _compute_optimal_path_length(self):
+        """Approximate shortest staged path via reachable zones (rect1 -> rect2 -> final circle)."""
+        if len(self.stage_goals) == 0:
+            return 0.0
+
+        # Expected path: start -> subgoal rect 1 -> subgoal rect 2 -> final circular goal.
+        if len(self.stage_goals) < 3:
+            waypoints = [self.start_position.astype(np.float32)] + [goal.astype(np.float32) for goal in self.stage_goals]
+            total = 0.0
+            for idx in range(1, len(waypoints)):
+                total += float(np.linalg.norm(waypoints[idx] - waypoints[idx - 1]))
+            return total
+
+        start_xy = self.start_position.astype(np.float32)
+        rect1_center = self.stage_goals[0].astype(np.float32)
+        rect2_center = self.stage_goals[1].astype(np.float32)
+        final_center = self.stage_goals[2].astype(np.float32)
+
+        rect_w = float(self.subgoal_marker_size_x)
+        rect_h = float(self.subgoal_marker_size_y)
+
+        def _sample_rect_points(center_xy):
+            xs = np.linspace(
+                float(center_xy[0]) - rect_w / 2.0,
+                float(center_xy[0]) + rect_w / 2.0,
+                int(self.optimal_path_rect_samples_x),
+                dtype=np.float32,
+            )
+            ys = np.linspace(
+                float(center_xy[1]) - rect_h / 2.0,
+                float(center_xy[1]) + rect_h / 2.0,
+                int(self.optimal_path_rect_samples_y),
+                dtype=np.float32,
+            )
+            grid_x, grid_y = np.meshgrid(xs, ys)
+            return np.stack((grid_x.ravel(), grid_y.ravel()), axis=1)
+
+        rect1_points = _sample_rect_points(rect1_center)
+        rect2_points = _sample_rect_points(rect2_center)
+
+        # Dynamic programming over sampled points:
+        # cost(start -> p in rect1) + cost(p -> q in rect2) + cost(q -> final circle)
+        start_to_rect1 = np.linalg.norm(rect1_points - start_xy[None, :], axis=1)
+        rect1_to_rect2 = np.linalg.norm(
+            rect1_points[:, None, :] - rect2_points[None, :, :],
+            axis=2,
+        )
+        best_cost_to_rect2 = (start_to_rect1[:, None] + rect1_to_rect2).min(axis=0)
+
+        rect2_to_final_center = np.linalg.norm(rect2_points - final_center[None, :], axis=1)
+        rect2_to_final_circle = np.maximum(rect2_to_final_center - float(self.goal_threshold), 0.0)
+
+        total_costs = best_cost_to_rect2 + rect2_to_final_circle
+        return float(np.min(total_costs))
+
+    def _update_episode_path_length(self, observations):
+        """Accumulate traveled path length during the episode."""
+        current_robot_xy = self._get_robot_xy(observations)
+        if self.previous_robot_xy is None:
+            self.previous_robot_xy = current_robot_xy
+            return
+
+        step_distance = float(np.linalg.norm(current_robot_xy - self.previous_robot_xy))
+        self.episode_path_length += step_distance
+        self.previous_robot_xy = current_robot_xy
     
     def _set_action(self, action):
         """
@@ -801,6 +875,9 @@ class CrossroadEnv(JackalRobotEnv):
 
         # Timed debug log for distance to current active goal
         self._maybe_log_goal_distance(obs)
+
+        # Update traveled path length
+        self._update_episode_path_length(obs)
         
         # Update counters
         self.current_step += 1
@@ -815,6 +892,11 @@ class CrossroadEnv(JackalRobotEnv):
             'max_goal_reached': self.max_goal_reached,  # Max goal reached (1, 2, or 3)
             'done_reason': self.done_reason,
             'rule_violation': self.rule_violation,
+            'episode_path_length': float(self.episode_path_length),
+            'optimal_path_length': float(self.episode_optimal_path_length),
+            'path_efficiency': float(
+                min(1.0, self.episode_optimal_path_length / max(self.episode_path_length, 1e-6))
+            ),
         }
         
         rospy.logdebug("End Step ==> Obs: " + str(obs))
@@ -858,6 +940,7 @@ class CrossroadEnv(JackalRobotEnv):
         # Generate new random goal for this episode
         self.goal_position = self._generate_random_goal()
         self._initialize_multi_goal_path()
+        self.episode_optimal_path_length = self._compute_optimal_path_length()
         self._update_goal_markers_in_gazebo()
         
         # Get initial observation
